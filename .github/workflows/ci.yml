@@ -1,0 +1,81 @@
+# Continuous integration: every pull request and every push to main must build and pass all tests.
+# Deployment (M10) will be a separate workflow that runs only after this one succeeds on main.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege: this workflow only reads the repository.
+permissions:
+  contents: read
+
+# A new push to the same PR cancels the run that is still going for the previous push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    name: Backend (.NET build + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Actions are pinned to a commit SHA (tags can be moved to point at malicious code).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+
+      - name: Restore
+        run: dotnet restore
+
+      # Warnings are errors (Directory.Build.props), so this also enforces the analyzers.
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      # Integration tests start PostgreSQL and Redis with Testcontainers; GitHub's Ubuntu
+      # runners have Docker preinstalled, so no service containers are needed here.
+      - name: Test
+        run: dotnet test --no-build --configuration Release
+
+      # Report only: this command exits 0 even when it finds something. The actual gate is
+      # NuGet's audit during restore, whose warnings fail the build via TreatWarningsAsErrors.
+      - name: List vulnerable packages
+        run: dotnet list package --vulnerable --include-transitive
+
+  frontend:
+    name: Frontend (lint + tests + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # npm ci installs exactly what package-lock.json says, and fails if it is out of date.
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high

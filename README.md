@@ -8,7 +8,18 @@ ThreatLock is a learning-scale rebuild of Slack's **Anomaly Event Response** (20
 2. **decides** what to do using each organisation's own policy, exclusions and per-user baselines, and
 3. **responds** automatically by revoking every session of the affected user, writing a tamper-evident audit entry, and notifying admins exactly once.
 
-> **Status:** M0, specification. No application code yet. See the [roadmap](docs/spec/SPEC.md#21-milestones).
+> **Status:** M1, skeleton. Projects, health checks, tests and CI are in place; features start in M2. See the [roadmap](docs/spec/SPEC.md#21-milestones).
+
+## Run it locally
+
+```bash
+docker compose -f deploy/compose/docker-compose.yml up -d --wait
+dotnet run --project src/ThreatLock.Api      # http://127.0.0.1:5080
+dotnet run --project src/ThreatLock.Worker
+cd web && npm install && npm run dev         # http://localhost:5173
+```
+
+Prerequisites, tests, configuration and troubleshooting: [docs/development.md](docs/development.md).
 
 ## Where to start reading
 
@@ -18,6 +29,7 @@ ThreatLock is a learning-scale rebuild of Slack's **Anomaly Event Response** (20
 | Learn the concepts before the code | [docs/learning/concepts.md](docs/learning/concepts.md) |
 | See why each big choice was made | [docs/adr/](docs/adr/README.md) |
 | Follow the build step by step | [docs/learning/journal/](docs/learning/journal/README.md) |
+| Build, run and test locally | [docs/development.md](docs/development.md) |
 | Find a specific doc | [docs/README.md](docs/README.md) |
 
 ## Stack

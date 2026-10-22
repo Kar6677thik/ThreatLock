@@ -1,0 +1,4 @@
+# Test-only analyzer overrides.
+[*.cs]
+# Test names read as sentences: Readyz_is_503_when_redis_is_down.
+dotnet_diagnostic.CA1707.severity = none

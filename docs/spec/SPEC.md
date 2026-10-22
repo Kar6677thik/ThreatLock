@@ -890,7 +890,7 @@ None block M1. Each has a default that applies unless revisited.
 | # | Question | Default | Decide by |
 | --- | --- | --- | --- |
 | Q1 | External notification channel (ntfy / Discord webhook)? | In-app only; webhook is a stretch | M6 |
-| Q2 | Redis or its open-source fork Valkey? | Redis (official image, pinned) | M1 |
+| Q2 | Redis or its open-source fork Valkey? | **Resolved (M1):** Redis 8.10.2, official image | M1 |
 | Q3 | JWT signing: HS256 or RS256 with key rotation (`kid`)? | HS256; RS256 + rotation as stretch | M3 |
 | Q4 | Format for the recorded failure demo (asciinema, GIF, screen video)? | Screen recording of admin UI + terminal | M11 |
 | Q5 | Ship a Grafana dashboard? | No; Prometheus endpoint only | M9 |

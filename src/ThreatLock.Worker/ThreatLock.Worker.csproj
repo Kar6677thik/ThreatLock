@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <!-- Background process: event consumer, detectors, decisions, response jobs. -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThreatLock.Core\ThreatLock.Core.csproj" />
+    <ProjectReference Include="..\ThreatLock.Infrastructure\ThreatLock.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

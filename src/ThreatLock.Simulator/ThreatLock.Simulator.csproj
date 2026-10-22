@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- CLI for seeding demo data, running attack scenarios and the evaluation harnesses (M9). -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThreatLock.Core\ThreatLock.Core.csproj" />
+  </ItemGroup>
+
+</Project>

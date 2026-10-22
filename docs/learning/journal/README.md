@@ -5,7 +5,7 @@ One file per milestone, written **during** the work. It's the story of the build
 | Milestone | Entry |
 | --- | --- |
 | M0 Specification | [M0-specification.md](M0-specification.md) |
-| M1 Skeleton | *not started* |
+| M1 Skeleton | [M1-skeleton.md](M1-skeleton.md) |
 | M2 Identity, orgs, notes | *not started* |
 | M3 Real sessions | *not started* |
 | M4 Event pipeline + D1, D2 | *not started* |
