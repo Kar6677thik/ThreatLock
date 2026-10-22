@@ -1,0 +1,32 @@
+# ThreatLock
+
+Detect a stolen session and kill it in seconds, not hours.
+
+ThreatLock is a learning-scale rebuild of Slack's **Anomaly Event Response** (2025): a small multi-tenant notes app with real logins, plus a security pipeline that
+
+1. **detects** suspicious activity (Tor exit nodes, impossible travel, scraping, new device followed by bulk export, session hijack signals),
+2. **decides** what to do using each organisation's own policy, exclusions and per-user baselines, and
+3. **responds** automatically by revoking every session of the affected user, writing a tamper-evident audit entry, and notifying admins exactly once.
+
+> **Status:** M0, specification. No application code yet. See the [roadmap](docs/spec/SPEC.md#21-milestones).
+
+## Where to start reading
+
+| If you want to... | Read |
+| --- | --- |
+| Understand what we are building and why | [docs/spec/SPEC.md](docs/spec/SPEC.md) |
+| Learn the concepts before the code | [docs/learning/concepts.md](docs/learning/concepts.md) |
+| See why each big choice was made | [docs/adr/](docs/adr/README.md) |
+| Follow the build step by step | [docs/learning/journal/](docs/learning/journal/README.md) |
+| Find a specific doc | [docs/README.md](docs/README.md) |
+
+## Stack
+
+C# / ASP.NET Core (.NET 10) with ASP.NET Core Identity · React + Vite + TypeScript · PostgreSQL · Redis (Streams + cache) · xUnit + Testcontainers · Docker Compose for local dev · k3s on a home server, deployed by GitHub Actions over Tailscale.
+
+## Inspiration
+
+- Slack Engineering, [Building Slack's Anomaly Event Response](https://slack.engineering/building-slacks-anomaly-event-response/)
+- InfoQ, [Slack's AER security system](https://www.infoq.com/news/2025/10/slack-aer-security-system)
+
+All attacks in this repository are run only against our own app.
