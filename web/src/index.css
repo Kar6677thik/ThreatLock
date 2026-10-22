@@ -1,0 +1,12 @@
+/* Deliberately minimal: this is not a frontend project (SPEC §14). */
+:root {
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  color-scheme: light dark;
+}
+
+main {
+  max-width: 48rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
