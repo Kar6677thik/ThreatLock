@@ -1,0 +1,42 @@
+# Local development dependencies. Start:  docker compose -f deploy/compose/docker-compose.yml up -d
+# Stop (keep data):  ... down      Stop and wipe data:  ... down -v
+#
+# Image tags are pinned and must match tests/ThreatLock.IntegrationTests/Infrastructure/ContainersFixture.cs.
+# Ports bind to 127.0.0.1 only, so nothing on your network can reach these dev databases.
+name: threatlock
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-threatlock}
+      POSTGRES_USER: ${POSTGRES_USER:-threatlock}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-threatlock-dev}
+    ports:
+      # Host port 5433, not 5432, so it never collides with a locally installed PostgreSQL.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8.10.2-alpine
+    # Append-only file: Redis survives restarts with its data (streams, cached session state).
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:
