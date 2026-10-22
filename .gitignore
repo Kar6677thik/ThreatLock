@@ -1,0 +1,35 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+*.trx
+coverage*/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local config and secrets (never commit)
+.env
+.env.*
+!.env.example
+appsettings.*.local.json
+secrets/
+
+# Downloaded data (fetched at build/run time, see docs/adr/0009)
+data/geoip/*.mmdb
+data/tor/*.txt
+
+# Generated datasets and benchmark output (reports are committed under docs/experiments)
+artifacts/
