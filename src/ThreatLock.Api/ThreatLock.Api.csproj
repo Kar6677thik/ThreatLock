@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- HTTP API: endpoints, Identity, session checks, event capture. Serves the built SPA. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThreatLock.Core\ThreatLock.Core.csproj" />
+    <ProjectReference Include="..\ThreatLock.Infrastructure\ThreatLock.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Domain types, detectors, policy evaluation, hash-chain maths.
+    Rule (SPEC §5.1): no I/O and no infrastructure packages. Enforced by
+    tests/ThreatLock.Core.Tests/ArchitectureTests.cs.
+  -->
+
+</Project>

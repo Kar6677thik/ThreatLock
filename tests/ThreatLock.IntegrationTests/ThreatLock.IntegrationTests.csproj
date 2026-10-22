@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Tests against real PostgreSQL and Redis started by Testcontainers. Needs Docker. -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.Redis" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ThreatLock.Api\ThreatLock.Api.csproj" />
+    <ProjectReference Include="..\..\src\ThreatLock.Infrastructure\ThreatLock.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

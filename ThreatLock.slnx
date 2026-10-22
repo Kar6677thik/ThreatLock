@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ThreatLock.Api/ThreatLock.Api.csproj" />
+    <Project Path="src/ThreatLock.Core/ThreatLock.Core.csproj" />
+    <Project Path="src/ThreatLock.Infrastructure/ThreatLock.Infrastructure.csproj" />
+    <Project Path="src/ThreatLock.Simulator/ThreatLock.Simulator.csproj" />
+    <Project Path="src/ThreatLock.Worker/ThreatLock.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ThreatLock.Core.Tests/ThreatLock.Core.Tests.csproj" />
+    <Project Path="tests/ThreatLock.IntegrationTests/ThreatLock.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

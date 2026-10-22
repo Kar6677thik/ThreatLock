@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Fast unit tests for ThreatLock.Core. No Docker needed. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ThreatLock.Core\ThreatLock.Core.csproj" />
+  </ItemGroup>
+
+</Project>
