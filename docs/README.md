@@ -2,6 +2,7 @@
 
 | Doc | Purpose | Updated when |
 | --- | --- | --- |
+| [development.md](development.md) | Build, run, test and troubleshoot locally | Tooling or setup changes |
 | [spec/SPEC.md](spec/SPEC.md) | What ThreatLock does and the rules it follows | A requirement changes (note it in the journal) |
 | [adr/](adr/README.md) | Why each big decision was made, and what was rejected | A significant decision is made or reversed |
 | [learning/concepts.md](learning/concepts.md) | The theory, mapped to milestones | A milestone introduces a concept not covered yet |
