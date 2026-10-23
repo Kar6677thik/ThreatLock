@@ -5,6 +5,7 @@ using Npgsql;
 using StackExchange.Redis;
 using ThreatLock.Infrastructure.HealthChecks;
 using ThreatLock.Infrastructure.Persistence;
+using ThreatLock.Infrastructure.Sessions;
 
 namespace ThreatLock.Infrastructure;
 
@@ -53,6 +54,9 @@ public static class ServiceCollectionExtensions
         // EF Core reuses the same NpgsqlDataSource (and so the same connection pool).
         services.AddDbContext<ThreatLockDbContext>((sp, options) =>
             DbContextConfiguration.Configure(options, sp.GetRequiredService<NpgsqlDataSource>()));
+
+        // Shared by the API (checks on every request) and the Worker (revokes in M6).
+        services.AddSingleton<SessionStore>();
 
         // Hosts that act for a tenant (the API) register their own ITenantContext; TryAdd keeps it.
         services.TryAddScoped<ITenantContext, NoTenantContext>();

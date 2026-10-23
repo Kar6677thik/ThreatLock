@@ -89,7 +89,15 @@ curl -s -H "Authorization: Bearer $T" -H "$J" -d '{"email":"ben@acme.test","disp
 echo $T | cut -d. -f2 | python -c "import sys,base64;s=sys.stdin.read().strip();print(base64.urlsafe_b64decode(s+'='*(-len(s)%4)).decode())"
 ```
 
-The Break B1 experiment is scripted: `scripts/experiments/b1-stateless-jwt.sh` (see [the report](experiments/B1-stateless-jwt.md)).
+The refresh cookie is `Secure`, so curl (unlike a browser) won't send it back over plain `http://127.0.0.1`. To try refresh from the command line, copy the `tl_refresh` value from the login response's `Set-Cookie` header and send it yourself:
+
+```bash
+curl -s -i -H "$J" -d '{"email":"asha@acme.test","password":"correct horse battery"}' $B/api/auth/login | grep -i set-cookie
+curl -s -X POST -H "X-Requested-With: threatlock" -H "Cookie: tl_refresh=<value>" $B/api/auth/refresh
+curl -s -H "Authorization: Bearer $T" $B/api/me/sessions     # where you're signed in
+```
+
+The Break B1 experiment is scripted: `scripts/experiments/b1-stateless-jwt.sh` (see [the report](experiments/B1-stateless-jwt.md)); `scripts/experiments/session-check-latency.py` measures what the session check costs per request.
 
 ## Database migrations
 
@@ -132,7 +140,13 @@ Settings come from `appsettings.json`, then `appsettings.{Environment}.json`, th
 | `ConnectionStrings:Postgres` | `Host=127.0.0.1;Port=5433;...` | Required; the app refuses to start without it |
 | `ConnectionStrings:Redis` | `127.0.0.1:6379` | Required |
 | `Auth:SigningKey` | a fixed dev-only key | Base64, ≥ 32 bytes. Anyone with it can mint tokens for any user; deployments use a secret |
-| `Auth:AccessTokenMinutes` | `60` | Deliberately long in M2 for Break B1; M3 lowers it to 5 |
+| `Auth:Mode` | `SessionChecked` | `StatelessJwt` switches off the per-request session check. Only for reproducing Break B1 |
+| `Auth:AccessTokenMinutes` | `5` | Access-token lifetime. B1 break runs use `60` |
+| `Auth:SessionIdleTimeout` | `12:00:00` | A session dies after this long without a refresh |
+| `Auth:SessionAbsoluteTimeout` | `7.00:00:00` | A session dies this long after login, however active |
+| `Auth:RefreshReuseGrace` | `00:00:05` | Second use of a refresh token within this window → `409` (race); later → session revoked (theft) |
+| `Auth:RefreshCookieSecure` | `true` | Browsers accept `Secure` cookies on `http://localhost`, so it stays on in development |
+| `Network:KnownProxies`, `Network:KnownNetworks` | empty | Proxies allowed to set `X-Forwarded-For` (IPs, CIDRs). Empty = trust nobody, use the TCP peer address (ADR-0007) |
 | `Auth:Issuer`, `Auth:Audience` | `threatlock`, `threatlock-api` | Checked on every token |
 | `Demo:AllowSignup` | `true` | Enables `POST /api/auth/register-org`; `false` returns 404 |
 | `Database:MigrateOnStartup` | `true` | Apply migrations when the API starts. Off in tests (the fixture migrates once) and in deployment |
@@ -150,5 +164,8 @@ To change Compose ports or credentials, copy `.env.example` to `.env` in the rep
 | `Testing with VSTest target is no longer supported` | .NET 10 SDK + xUnit v3 need the new test platform | Already set in `global.json` (`"test": { "runner": "Microsoft.Testing.Platform" }`) |
 | Integration tests hang or fail to start containers | Docker isn't running | Start Docker Desktop |
 | `Cannot consume scoped service ... from singleton` at startup | A singleton depends on a scoped service (captive dependency); Development turns on scope validation to catch this | Don't inject scoped services into singletons; see concepts.md §6.4 |
+| Signed out after every page reload | The `Secure` refresh cookie isn't being stored or sent back | Open the SPA at `http://localhost:5173` (the setup verified in M3); browsers accept `Secure` cookies over plain http only on hosts they consider secure contexts, such as `localhost`. Don't open the API port directly |
+| `401` with `error_description="session_revoked"` | The token is fine but its session was logged out, revoked or idle-expired | Sign in again (the SPA does this for you) |
+| `503` on every authenticated request | The session check can reach neither Redis nor PostgreSQL, so it fails closed | Start the databases: `docker compose ... up -d` |
 | Experiment script says `Python was not found` | On Windows, `python3` can be a Microsoft Store stub | The scripts detect this and fall back to `python` |
 | Worker fails at startup: `ConnectionStrings:Postgres is required` | Running with environment `Production`, so dev settings weren't loaded | Use `dotnet run` (it reads `launchSettings.json`, which sets `DOTNET_ENVIRONMENT=Development`) |

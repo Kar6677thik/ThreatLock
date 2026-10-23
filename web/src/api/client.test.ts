@@ -18,7 +18,9 @@ describe('request', () => {
     await request('/api/notes', { method: 'POST', body: { title: 'x' }, token: 'abc' })
 
     const [, init] = fetchMock.mock.calls[0]
-    expect(init?.headers).toEqual({ 'Content-Type': 'application/json', Authorization: 'Bearer abc' })
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    expect(headers).toMatchObject({ 'Content-Type': 'application/json', Authorization: 'Bearer abc' })
+    expect(headers['X-Device-Id']).toMatch(/^[0-9a-f-]{36}$/)
     expect(init?.body).toBe('{"title":"x"}')
   })
 

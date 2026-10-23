@@ -4,43 +4,61 @@ using ThreatLock.IntegrationTests.Infrastructure;
 namespace ThreatLock.IntegrationTests;
 
 /// <summary>
-/// Break B1 (SPEC §15): with stateless JWTs, "signing someone out" changes nothing on the
-/// server that a token depends on, so a copied token keeps working until it expires.
+/// Break B1 (SPEC §15), both halves.
 /// <para>
-/// These tests assert the *vulnerable* M2 behaviour on purpose, so the failure is recorded and
-/// reproducible. M3 adds server-side sessions; these expectations then hold only for
-/// <c>Auth:Mode=StatelessJwt</c>, and the default mode must reject the token.
+/// <b>Break:</b> with <c>Auth:Mode=StatelessJwt</c> nothing the server checks changes when a user
+/// logs out or is revoked, so a copied token keeps working until it expires. These tests assert
+/// the vulnerable behaviour on purpose, so the failure stays reproducible.
 /// </para>
+/// <b>Prove:</b> in the default <c>SessionChecked</c> mode the same steps make the copied token
+/// fail on the very next request.
 /// </summary>
-public class BreakB1StatelessJwtTests(ContainersFixture containers)
+public sealed class BreakB1StatelessJwtTests(ContainersFixture containers) : IAsyncDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
-    private ThreatLockApiFactory Api => containers.Api;
 
-    [Fact]
-    public async Task B1_a_stolen_token_still_works_after_the_victim_logs_out()
+    private readonly ThreatLockApiFactory stateless = new(containers, new Dictionary<string, string?>
     {
-        var victim = await Api.RegisterOrgAsync("Victim");
-        using var attacker = Api.CreateClient(victim.AccessToken);   // a copied token
+        ["Auth:Mode"] = "StatelessJwt",
+        ["Auth:AccessTokenMinutes"] = "60",
+    });
 
-        var logout = await victim.Client.PostAsync("/api/auth/logout", null, Ct);
-        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+    public ValueTask DisposeAsync() => stateless.DisposeAsync();
 
-        Assert.Equal(HttpStatusCode.OK, (await attacker.GetAsync("/api/notes", Ct)).StatusCode);
+    public static TheoryData<string> Revocations => ["victim-logs-out", "admin-revokes"];
+
+    [Theory]
+    [MemberData(nameof(Revocations))]
+    public async Task Break_stateless_mode_a_stolen_token_survives(string revocation)
+    {
+        var attackerStatus = await StealThenRevokeAsync(stateless, revocation);
+
+        Assert.Equal(HttpStatusCode.OK, attackerStatus);
     }
 
-    [Fact]
-    public async Task B1_a_stolen_token_still_works_after_an_admin_revokes_the_users_sessions()
+    [Theory]
+    [MemberData(nameof(Revocations))]
+    public async Task Prove_session_checked_mode_a_stolen_token_dies_on_the_next_request(string revocation)
     {
-        var owner = await Api.RegisterOrgAsync("Owner");
-        var victim = await Api.CreateUserAsync(owner, "Victim");
+        var attackerStatus = await StealThenRevokeAsync(containers.Api, revocation);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, attackerStatus);
+    }
+
+    /// <summary>Victim signs in, attacker copies the token, then the session is revoked.</summary>
+    private static async Task<HttpStatusCode> StealThenRevokeAsync(ThreatLockApiFactory api, string revocation)
+    {
+        var owner = await api.RegisterOrgAsync("Owner");
+        var victim = await api.CreateUserAsync(owner, "Victim");
         await victim.CreateNoteAsync("Quarterly numbers");
-        using var attacker = Api.CreateClient(victim.AccessToken);
+        using var attacker = api.CreateClient(victim.AccessToken);   // a copied token
+        Assert.Equal(HttpStatusCode.OK, (await attacker.GetAsync("/api/notes/export", Ct)).StatusCode);
 
-        var revoke = await owner.Client.PostAsync($"/api/admin/users/{victim.User.Id}/revoke-sessions", null, Ct);
-        Assert.Equal(HttpStatusCode.OK, revoke.StatusCode);
+        var response = revocation == "victim-logs-out"
+            ? await victim.Client.PostAsync("/api/auth/logout", null, Ct)
+            : await owner.Client.PostAsync($"/api/admin/users/{victim.User.Id}/revoke-sessions", null, Ct);
+        Assert.True(response.IsSuccessStatusCode);
 
-        var stolen = await attacker.GetAsync("/api/notes/export", Ct);
-        Assert.Equal(HttpStatusCode.OK, stolen.StatusCode);
+        return (await attacker.GetAsync("/api/notes/export", Ct)).StatusCode;
     }
 }

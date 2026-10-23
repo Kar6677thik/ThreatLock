@@ -17,14 +17,17 @@ public static class TestTokens
         DateTime? expires = null,
         string issuer = "threatlock",
         string audience = "threatlock-api",
-        string? signingKeyBase64 = null)
+        string? signingKeyBase64 = null,
+        string? sessionId = null)
     {
         var iat = issuedAt ?? DateTime.UtcNow;
         var descriptor = new SecurityTokenDescriptor
         {
             Issuer = issuer,
             Audience = audience,
-            Subject = new ClaimsIdentity([new Claim("sub", subject), new Claim("org", org), new Claim("roles", "owner")]),
+            Subject = new ClaimsIdentity(sessionId is null
+                ? [new Claim("sub", subject), new Claim("org", org), new Claim("roles", "owner")]
+                : [new Claim("sub", subject), new Claim("org", org), new Claim("roles", "owner"), new Claim("sid", sessionId)]),
             IssuedAt = iat,
             NotBefore = iat,
             Expires = expires ?? iat.AddMinutes(60),
@@ -47,6 +50,10 @@ public static class TestTokens
         var payload = Encode($$"""{"iss":"threatlock","aud":"threatlock-api","sub":"{{subject}}","org":"{{org}}","roles":"owner","exp":{{exp}}}""");
         return $"{header}.{payload}.";
     }
+
+    /// <summary>Reads one claim from a token without validating it (tests only).</summary>
+    public static string Claim(string token, string name) =>
+        new JsonWebToken(token).GetClaim(name).Value;
 
     /// <summary>Flips one character in the payload, keeping the original signature.</summary>
     public static string Tamper(string token)

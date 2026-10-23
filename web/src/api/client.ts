@@ -1,6 +1,8 @@
-// One place that performs authenticated HTTP calls. Components never call fetch directly, so
-// auth headers and error handling stay consistent. In M3 this is where "on 401, refresh the
-// access token once, then retry" will live (SPEC §14).
+// One place that performs HTTP calls. Components never call fetch directly, so headers and
+// error handling stay consistent. The "refresh once on 401, then retry" logic sits one level up,
+// in AuthContext, because it needs the session state (SPEC §14).
+
+import { getDeviceId } from './device'
 
 /** RFC 9457 problem details, as returned by the API on errors. */
 export interface Problem {
@@ -32,11 +34,12 @@ export interface RequestOptions {
   body?: unknown
   token?: string
   signal?: AbortSignal
+  headers?: Record<string, string>
 }
 
 /** Sends a request and returns the raw response, throwing ApiError for non-2xx answers. */
 export async function send(path: string, options: RequestOptions = {}): Promise<Response> {
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = { 'X-Device-Id': getDeviceId(), ...options.headers }
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
   if (options.token) headers.Authorization = `Bearer ${options.token}`
 

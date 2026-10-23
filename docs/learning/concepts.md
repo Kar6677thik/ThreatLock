@@ -46,7 +46,7 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **What:** a long-lived secret used *only* to get new short-lived access tokens. *Rotation* means every use returns a new refresh token and invalidates the old one. *Reuse detection*: if an already-used refresh token shows up again, two parties have it, so one of them is a thief. Kill the session.
 - **Why:** keeps users signed in for days while the token that travels on every request lives for 5 minutes. Reuse detection turns cookie theft into a near-certain signal (detector D5).
 - **When:** M3.
-- **Watch out:** race conditions. Two browser tabs refreshing at the same moment look exactly like reuse. Typical fix: a tiny grace window, or one tab coordinating refreshes. We note what we pick in the M3 journal.
+- **Watch out:** race conditions. Two browser tabs refreshing at the same moment look exactly like reuse. ThreatLock's answer (M3): a second use within 5 seconds gets `409` and changes nothing, so the client retries with the newer cookie; after 5 seconds it's treated as theft and the session dies. The SPA also shares one in-flight refresh between all its requests.
 
 ### 1.6 Cookies: HttpOnly, Secure, SameSite, CSRF [FG 25.8]
 
@@ -82,6 +82,13 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **Why:** notes are filtered by org (EF Core query filter) *and* by owner-or-shared; org and owner are always taken from the token. Tests send other orgs' ids and smuggled `orgId` fields to prove both.
 - **When:** M2.
 - **Watch out:** returning 403 for "exists but not yours" leaks existence. We return 404 unless the caller could already see the item.
+
+### 1.11 Fail closed vs fail open [FG 17, 25.3]
+
+- **What:** when a security check *can't run* (its database is down), the system must pick: *fail open* (let the request through) or *fail closed* (refuse it). Fail open keeps the app up and lets attackers through; fail closed blocks attackers and also legitimate users.
+- **Why:** the session check fails closed with `503` when both Redis and PostgreSQL are unreachable. `503` (not `401`) tells the client "try again", so the SPA doesn't throw the user out. When only Redis is down the check falls back to PostgreSQL, so most outages cost latency, not availability.
+- **When:** M3.
+- **Watch out:** fail-open bugs hide in `catch` blocks. `catch { return true; }` around a permission check is the classic.
 
 ---
 
@@ -124,6 +131,13 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 
 - **What:** wait 1 s, 2 s, 4 s... between retries (exponential), plus some randomness (jitter) so a thousand failed jobs don't all retry at the same instant. After N attempts, stop and park the job (dead letter).
 - **When:** M4 (dead-letter stream), M6 (jobs).
+
+### 2.7 Atomic compare-and-set in SQL [FG 11]
+
+- **What:** "read a value, check it, then write" has a race: two requests can both read "unused" before either writes. Put the check *in* the write instead: `UPDATE refresh_tokens SET used_at = now() WHERE id = $1 AND used_at IS NULL`. The database runs it atomically, so exactly one concurrent caller sees "1 row updated"; everyone else sees 0 and knows they lost.
+- **Why:** refresh-token rotation (M3). The same pattern returns for job claiming (M6) and anywhere "only once" matters.
+- **When:** M3.
+- **Watch out:** an ORM that loads an entity, changes it in memory and saves it does *not* do this; it overwrites blindly unless you add a concurrency token.
 
 ---
 

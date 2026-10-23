@@ -8,7 +8,7 @@ ThreatLock is a learning-scale rebuild of Slack's **Anomaly Event Response** (20
 2. **decides** what to do using each organisation's own policy, exclusions and per-user baselines, and
 3. **responds** automatically by revoking every session of the affected user, writing a tamper-evident audit entry, and notifying admins exactly once.
 
-> **Status:** M2, identity and notes. Orgs, users, roles and notes work end to end, deliberately with *naive* 60-minute stateless tokens: Break B1 shows a "revoked" token still working. M3 fixes it. See the [roadmap](docs/spec/SPEC.md#21-milestones).
+> **Status:** M3, real sessions. Every token is tied to a server-side session checked on each request, so logout and admin revocation stop a stolen token on its very next request ([B1 report](docs/experiments/B1-stateless-jwt.md)). Detection starts in M4. See the [roadmap](docs/spec/SPEC.md#21-milestones).
 
 ## Run it locally
 

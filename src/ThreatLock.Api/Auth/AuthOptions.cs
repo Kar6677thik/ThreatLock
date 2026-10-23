@@ -1,9 +1,27 @@
 namespace ThreatLock.Api.Auth;
 
+/// <summary>How access tokens are trusted (SPEC §6.1).</summary>
+public enum AuthMode
+{
+    /// <summary>
+    /// Default. Every request checks the token's session (<c>sid</c>) is still active, so
+    /// revocation takes effect on the next request.
+    /// </summary>
+    SessionChecked,
+
+    /// <summary>
+    /// Break B1 only: the token alone is trusted until it expires. Kept as a switch so the
+    /// failure can be reproduced at any time; never use it for real.
+    /// </summary>
+    StatelessJwt,
+}
+
 /// <summary>Bound from the <c>Auth</c> configuration section (SPEC §6).</summary>
 public sealed class AuthOptions
 {
     public const string SectionName = "Auth";
+
+    public AuthMode Mode { get; set; } = AuthMode.SessionChecked;
 
     public string Issuer { get; set; } = "threatlock";
 
@@ -16,10 +34,28 @@ public sealed class AuthOptions
     public string SigningKey { get; set; } = "";
 
     /// <summary>
-    /// M2 uses 60-minute stateless tokens on purpose: this is the naive design that Break B1
-    /// demonstrates. M3 introduces server-side sessions and drops this to 5 minutes.
+    /// 5 minutes. With the session check, revocation doesn't depend on this; it's defence in
+    /// depth if the check is ever bypassed. The B1 break run sets it to 60 with StatelessJwt.
     /// </summary>
-    public int AccessTokenMinutes { get; set; } = 60;
+    public int AccessTokenMinutes { get; set; } = 5;
+
+    /// <summary>A session dies after this long without a refresh.</summary>
+    public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromHours(12);
+
+    /// <summary>A session dies this long after login, however active it is.</summary>
+    public TimeSpan SessionAbsoluteTimeout { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// How long after a refresh token's first use a second use counts as a harmless race (two
+    /// tabs) rather than theft (SPEC §6.4).
+    /// </summary>
+    public TimeSpan RefreshReuseGrace { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Marks the refresh cookie <c>Secure</c> (HTTPS only). Browsers treat http://localhost as
+    /// secure, so this stays on even in development.
+    /// </summary>
+    public bool RefreshCookieSecure { get; set; } = true;
 
     public byte[] SigningKeyBytes() => Convert.FromBase64String(SigningKey);
 

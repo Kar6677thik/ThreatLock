@@ -46,3 +46,42 @@ public sealed class Note
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
+
+/// <summary>
+/// A server-side login session: the unit of revocation (SPEC §6, ADR-0002). Access tokens carry
+/// its id as the <c>sid</c> claim, and the API checks it on every request.
+/// </summary>
+public sealed class Session
+{
+    public Guid Id { get; init; } = Guid.CreateVersion7();
+    public Guid UserId { get; init; }
+    public Guid OrgId { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+
+    /// <summary>Client IP at login, after trusted-proxy resolution (ADR-0007). Null if unknown.</summary>
+    public System.Net.IPAddress? CreatedIp { get; init; }
+
+    /// <summary>The browser's self-chosen device id (X-Device-Id). A signal, never proof.</summary>
+    public string? CreatedDeviceId { get; init; }
+
+    public string? CreatedUserAgent { get; init; }
+    public DateTimeOffset LastSeenAt { get; set; }
+    public DateTimeOffset IdleExpiresAt { get; set; }
+    public DateTimeOffset AbsoluteExpiresAt { get; init; }
+    public DateTimeOffset? RevokedAt { get; set; }
+    public string? RevokedReason { get; set; }
+}
+
+/// <summary>
+/// One link in a session's refresh-token chain. Only the SHA-256 hash is stored, so a database
+/// leak doesn't hand out working refresh tokens. A used token points at its replacement.
+/// </summary>
+public sealed class RefreshToken
+{
+    public Guid Id { get; init; } = Guid.CreateVersion7();
+    public Guid SessionId { get; init; }
+    public required byte[] TokenHash { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset? UsedAt { get; set; }
+    public Guid? ReplacedById { get; set; }
+}

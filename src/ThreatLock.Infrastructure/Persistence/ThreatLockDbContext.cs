@@ -9,6 +9,8 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
 {
     public DbSet<Org> Orgs => Set<Org>();
     public DbSet<Note> Notes => Set<Note>();
+    public DbSet<Session> Sessions => Set<Session>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     /// <summary>
     /// Read by the query filter below. EF Core turns a reference to a DbContext member into a
@@ -63,6 +65,29 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
             // Tenant isolation, enforced once for every query on notes (SPEC §4). With no tenant
             // (null) the comparison is never true, so a missing tenant fails *closed*.
             note.HasQueryFilter(n => n.OrgId == CurrentOrgId);
+        });
+
+        // Not tenant-filtered: the session check runs before we trust any tenant claim, and it
+        // looks sessions up by their unguessable id. Queries by user filter by org explicitly.
+        builder.Entity<Session>(session =>
+        {
+            session.Property(s => s.CreatedDeviceId).HasMaxLength(64);
+            session.Property(s => s.CreatedUserAgent).HasMaxLength(512);
+            session.Property(s => s.RevokedReason).HasMaxLength(50);
+            session.HasOne<AppUser>().WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+            session.HasOne<Org>().WithMany().HasForeignKey(s => s.OrgId).OnDelete(DeleteBehavior.Restrict);
+
+            // "All live sessions of this user" is the revocation query; a partial index keeps it
+            // small because revoked sessions (the vast majority over time) aren't in it.
+            session.HasIndex(s => s.UserId).HasFilter("revoked_at IS NULL").HasDatabaseName("ix_sessions_user_id_active");
+        });
+
+        builder.Entity<RefreshToken>(token =>
+        {
+            token.Property(t => t.TokenHash).HasMaxLength(32);
+            token.HasIndex(t => t.TokenHash).IsUnique();
+            token.HasIndex(t => t.SessionId);
+            token.HasOne<Session>().WithMany().HasForeignKey(t => t.SessionId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

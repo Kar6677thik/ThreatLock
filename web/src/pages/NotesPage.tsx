@@ -1,32 +1,30 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ApiError, request, send } from '../api/client'
+import { ApiError } from '../api/client'
 import type { NoteRequest, NoteSummary, NoteView } from '../api/types'
 import { useAuth } from '../auth/useAuth'
 
 const empty: NoteRequest = { title: '', body: '', shared: false }
 
-export function NotesPage({ token }: { token: string }) {
-  const { expire } = useAuth()
+export function NotesPage() {
+  const { call, callRaw } = useAuth()
   const [notes, setNotes] = useState<NoteSummary[]>([])
   const [selected, setSelected] = useState<NoteView | null>(null)
   const [draft, setDraft] = useState<NoteRequest>(empty)
   const [errors, setErrors] = useState<string[]>([])
 
-  // Every API error goes through here: a 401 means the token is no longer accepted.
-  const fail = useCallback(
-    (error: unknown) => {
-      if (error instanceof ApiError && error.status === 401) expire()
-      else setErrors(error instanceof ApiError ? error.messages : [String(error)])
-    },
-    [expire],
-  )
+  // Every API error goes through here. A 401 never reaches us unless the session is truly gone,
+  // and then AuthContext has already sent the user back to the sign-in screen.
+  const fail = useCallback((error: unknown) => {
+    if (error instanceof ApiError && error.status === 401) return
+    setErrors(error instanceof ApiError ? error.messages : [String(error)])
+  }, [])
 
   const reload = useCallback(
     (signal?: AbortSignal) =>
-      request<NoteSummary[]>('/api/notes', { token, signal })
+      call<NoteSummary[]>('/api/notes', { signal })
         .then(setNotes)
         .catch((error: unknown) => signal?.aborted || fail(error)),
-    [token, fail],
+    [call, fail],
   )
 
   useEffect(() => {
@@ -37,7 +35,7 @@ export function NotesPage({ token }: { token: string }) {
 
   async function open(id: string) {
     try {
-      const note = await request<NoteView>(`/api/notes/${id}`, { token })
+      const note = await call<NoteView>(`/api/notes/${id}`)
       setSelected(note)
       setDraft({ title: note.title, body: note.body, shared: note.shared })
       setErrors([])
@@ -56,8 +54,8 @@ export function NotesPage({ token }: { token: string }) {
     event.preventDefault()
     try {
       const saved = selected
-        ? await request<NoteView>(`/api/notes/${selected.id}`, { method: 'PUT', body: draft, token })
-        : await request<NoteView>('/api/notes', { method: 'POST', body: draft, token })
+        ? await call<NoteView>(`/api/notes/${selected.id}`, { method: 'PUT', body: draft })
+        : await call<NoteView>('/api/notes', { method: 'POST', body: draft })
       setSelected(saved)
       setErrors([])
       await reload()
@@ -69,7 +67,7 @@ export function NotesPage({ token }: { token: string }) {
   async function remove() {
     if (!selected) return
     try {
-      await send(`/api/notes/${selected.id}`, { method: 'DELETE', token })
+      await callRaw(`/api/notes/${selected.id}`, { method: 'DELETE' })
       startNew()
       await reload()
     } catch (error) {
@@ -81,7 +79,7 @@ export function NotesPage({ token }: { token: string }) {
     try {
       // The export is an authenticated download, so a plain <a href> can't send the token.
       // Fetch it, then hand the browser a temporary object URL to save.
-      const response = await send('/api/notes/export', { token })
+      const response = await callRaw('/api/notes/export')
       const name = /filename="?([^";]+)"?/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ?? 'notes.json'
       const url = URL.createObjectURL(await response.blob())
       const link = Object.assign(document.createElement('a'), { href: url, download: name })

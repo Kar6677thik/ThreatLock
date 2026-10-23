@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using ThreatLock.Api.Auth;
 using ThreatLock.Core.Identity;
+using ThreatLock.Core.Sessions;
 using ThreatLock.Infrastructure.Persistence;
+using ThreatLock.Infrastructure.Sessions;
 
 namespace ThreatLock.Api.Admin;
 
@@ -18,7 +20,7 @@ public sealed record SetRolesRequest([property: Required] string[] Roles);
 
 public sealed record AdminUserView(Guid Id, string Email, string DisplayName, IReadOnlyList<string> Roles, DateTimeOffset CreatedAt);
 
-public sealed record RevokeSessionsResponse(Guid UserId, string Effect);
+public sealed record RevokeSessionsResponse(Guid UserId, int RevokedSessions);
 
 /// <summary>
 /// User management inside the caller's org (SPEC §13). The Users table is not tenant-filtered
@@ -33,6 +35,7 @@ public static class UserAdminEndpoints
         admin.MapGet("/", List).RequireAuthorization(Policies.Admin);
         admin.MapPost("/", Create).RequireAuthorization(Policies.Admin);
         admin.MapPut("/{id:guid}/roles", SetRoles).RequireAuthorization(Policies.Owner);
+        admin.MapGet("/{id:guid}/sessions", UserSessions).RequireAuthorization(Policies.Admin);
         admin.MapPost("/{id:guid}/revoke-sessions", RevokeSessions).RequireAuthorization(Policies.SecurityAdmin);
     }
 
@@ -118,21 +121,27 @@ public static class UserAdminEndpoints
         return TypedResults.Ok(new AdminUserView(user.Id, user.Email!, user.DisplayName, roles, user.CreatedAt));
     }
 
+    /// <summary>A user's live sessions, for an admin deciding whether to revoke them.</summary>
+    private static async Task<Results<Ok<List<SessionView>>, NotFound>> UserSessions(
+        Guid id, ThreatLockDbContext db, CurrentUser me, TimeProvider time, CancellationToken ct)
+    {
+        if (!await db.Users.AnyAsync(u => u.Id == id && u.OrgId == me.RequiredOrgId, ct)) return TypedResults.NotFound();
+
+        var sessions = await AuthEndpoints.ActiveSessionsQuery(db, id, time.GetUtcNow()).ToListAsync(ct);
+        return TypedResults.Ok(sessions.Select(s => AuthEndpoints.ToView(s, me.SessionId)).ToList());
+    }
+
     /// <summary>
-    /// M2 (naive) version, kept honest. Rotating the security stamp is all the server can do,
-    /// and it affects nothing: access tokens are stateless, so every token already issued keeps
-    /// working until it expires. This is Break B1 (SPEC §15). M3 replaces it with real
-    /// session revocation.
+    /// Signs the user out everywhere, effective on their very next request (SPEC §6.6). In M2
+    /// this only rotated the security stamp and changed nothing for issued tokens (Break B1).
     /// </summary>
     private static async Task<Results<Ok<RevokeSessionsResponse>, NotFound>> RevokeSessions(
-        Guid id, UserManager<AppUser> users, ThreatLockDbContext db, CurrentUser me, CancellationToken ct)
+        Guid id, ThreatLockDbContext db, SessionStore store, CurrentUser me, CancellationToken ct)
     {
-        var user = await db.Users.SingleOrDefaultAsync(u => u.Id == id && u.OrgId == me.RequiredOrgId, ct);
-        if (user is null) return TypedResults.NotFound();
+        if (!await db.Users.AnyAsync(u => u.Id == id && u.OrgId == me.RequiredOrgId, ct)) return TypedResults.NotFound();
 
-        await users.UpdateSecurityStampAsync(user);
-        return TypedResults.Ok(new RevokeSessionsResponse(user.Id,
-            "Security stamp rotated. Access tokens are stateless, so tokens already issued stay valid until they expire."));
+        var revoked = await store.RevokeAllForUserAsync(id, RevocationReasons.AdminManual, ct);
+        return TypedResults.Ok(new RevokeSessionsResponse(id, revoked.Count));
     }
 
     /// <summary>Validates role names and always includes "member". Null means an unknown role was sent.</summary>

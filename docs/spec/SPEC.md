@@ -236,10 +236,10 @@ The API supports two modes, chosen by configuration `Auth:Mode`. The naive mode 
 
 | | `StatelessJwt` (Break mode) | `SessionChecked` (default) |
 | --- | --- | --- |
-| Access token lifetime | 60 min | 5 min |
+| Access token lifetime | `Auth:AccessTokenMinutes` (B1 runs set 60) | 5 min |
 | Server checks session on each request | No | **Yes** |
 | Revocation takes effect | When the token expires (≤ 60 min) | On the next request (≈ immediately) |
-| Refresh token | Not used | Rotating, HttpOnly cookie |
+| Refresh token | Still issued (sessions are created in both modes), but irrelevant: the access token alone is trusted | Rotating, HttpOnly cookie |
 
 Production and all tests except B1 run in `SessionChecked`. See [ADR-0002](../adr/0002-short-lived-jwt-plus-server-side-session-check.md).
 
@@ -287,9 +287,12 @@ Validation **must** check signature, `iss`, `aud`, `exp` (clock skew ≤ 30 s), 
 `POST /api/auth/refresh` (requires header `X-Requested-With: threatlock` as a second CSRF guard):
 
 1. Look up the presented token by hash.
-2. If it is the **current** token of an active session's family: mark it used, issue a new refresh token and a new access token, slide `idle_expires_at`, emit `token_refreshed`.
-3. If it was **already used** (someone presents an old token): this means two parties hold the same family, which is a strong theft signal. Revoke the session immediately (inline, not async: this is cheap and certain), emit `refresh_token_reused`, and return `401`. Detector D5 turns that event into an anomaly so the response and admin notification still happen.
-4. Unknown, expired or revoked token: `401`.
+2. If it is the **current** token of an active session's family: claim it atomically (`UPDATE ... SET used_at = now WHERE id = ... AND used_at IS NULL`, so of two racing requests exactly one wins), issue a new refresh token and a new access token (roles re-read from the database), slide `idle_expires_at`, emit `token_refreshed` (from M4).
+3. If it was **already used less than `Auth:RefreshReuseGrace` ago** (default 5 s): this is a race between two tabs or two requests, not theft. Return `409` and change nothing; the client retries with the newer cookie the browser now holds. An attacker replaying inside this window gets no token.
+4. If it was **already used longer ago**: two parties hold the same family, a strong theft signal. Revoke the session immediately (inline, not async: this is cheap and certain), emit `refresh_token_reused` (from M4), and return `401`. Detector D5 turns that event into an anomaly so the response and admin notification still happen.
+5. Unknown, expired or revoked token, or missing cookie: `401` and the cookie is cleared. Missing `X-Requested-With`: `403`.
+
+Because roles are re-read on refresh, a role change reaches a signed-in user within one access-token lifetime (5 min).
 
 ### 6.5 Server-side session check
 
@@ -302,13 +305,13 @@ In `SessionChecked` mode, after JWT validation, middleware checks the `sid`:
 2. If Redis is unavailable: fall back to PostgreSQL for every request (slower, still correct). If PostgreSQL is also unavailable: `503`. We **fail closed**: never treat "can't check" as "active".
 3. `last_seen_at` is updated at most once per minute per session (write throttling).
 
-On revocation we **write the revoked marker** rather than delete the key, so there is no window where a stale `"a"` is served. The only staleness is if the Redis write fails after the PostgreSQL commit; then a cached `"a"` can live up to its 60 s TTL. That bound is documented and tested.
+On revocation we **write the revoked marker** rather than delete the key, so there is no window where a stale `"a"` is served. The only staleness is if the Redis write fails after the PostgreSQL commit; then a cached `"a"` can live up to its 60 s TTL. That bound is documented; it isn't covered by an automated test because it needs a Redis write to fail between two specific statements. The tested guarantees are: Redis down → still correct via PostgreSQL; both down → `503`.
 
 ### 6.6 Logout and manual revoke
 
 - `POST /api/auth/logout` revokes the current session (reason `user_logout`).
 - `DELETE /api/me/sessions/{sid}` revokes one of your own sessions.
-- `POST /api/admin/users/{id}/revoke-sessions` revokes all of a user's sessions (reason `admin_manual`), audited.
+- `POST /api/admin/users/{id}/revoke-sessions` revokes all of a user's sessions (reason `admin_manual`), returns how many were revoked, and is idempotent (a second call revokes 0). Audited from M7.
 
 ### 6.7 Client IP and the simulation header
 

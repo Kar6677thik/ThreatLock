@@ -59,3 +59,14 @@ button.link {
 button.link[aria-current='true'] {
   font-weight: bold;
 }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.25rem 0.75rem 0.25rem 0;
+}
