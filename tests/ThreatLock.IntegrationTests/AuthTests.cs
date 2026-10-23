@@ -88,7 +88,7 @@ public class AuthTests(ContainersFixture containers)
     }
 
     [Fact]
-    public async Task Login_returns_a_60_minute_token_in_M2()
+    public async Task Login_returns_a_5_minute_token_bound_to_a_session()
     {
         var owner = await Api.RegisterOrgAsync();
 
@@ -97,7 +97,8 @@ public class AuthTests(ContainersFixture containers)
         var login = await response.Content.ReadFromJsonAsync<LoginResponse>(Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.InRange(login!.ExpiresAt - DateTimeOffset.UtcNow, TimeSpan.FromMinutes(59), TimeSpan.FromMinutes(60));
+        Assert.InRange(login!.ExpiresAt - DateTimeOffset.UtcNow, TimeSpan.FromMinutes(4), TimeSpan.FromMinutes(5));
+        Assert.True(Guid.TryParse(TestTokens.Claim(login.AccessToken, "sid"), out _));
     }
 
     [Fact]
@@ -191,12 +192,28 @@ public class AuthTests(ContainersFixture containers)
     [Fact]
     public async Task A_correctly_forged_token_shows_why_the_signing_key_is_a_secret()
     {
-        // Anyone who has the signing key can mint a valid token for any user. This is why the
-        // key must live in a secret store, never in the repository (SPEC §19).
+        // Anyone who has the signing key can mint a valid token for any user, if they also know
+        // one of that user's live session ids. That's why the key must live in a secret store,
+        // never in the repository (SPEC §19).
         var owner = await Api.RegisterOrgAsync();
-        using var client = Api.CreateClient(TestTokens.Create(owner.User.Id.ToString(), owner.User.OrgId.ToString()));
+        var sid = TestTokens.Claim(owner.AccessToken, "sid");
+        using var forged = Api.CreateClient(TestTokens.Create(owner.User.Id.ToString(), owner.User.OrgId.ToString(), sessionId: sid));
 
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/me", Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await forged.GetAsync("/api/me", Ct)).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_validly_signed_token_without_a_live_session_is_rejected()
+    {
+        // Since M3 the signature alone is not enough: the session must exist and be active.
+        var owner = await Api.RegisterOrgAsync();
+        var sub = owner.User.Id.ToString();
+        var org = owner.User.OrgId.ToString();
+        using var noSession = Api.CreateClient(TestTokens.Create(sub, org));
+        using var madeUpSession = Api.CreateClient(TestTokens.Create(sub, org, sessionId: Guid.NewGuid().ToString()));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await noSession.GetAsync("/api/me", Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await madeUpSession.GetAsync("/api/me", Ct)).StatusCode);
     }
 
     private static async Task<HashSet<string>> ReadErrorsAsync(HttpResponseMessage response)
