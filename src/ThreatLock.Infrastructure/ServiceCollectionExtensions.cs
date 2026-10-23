@@ -1,8 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using StackExchange.Redis;
 using ThreatLock.Infrastructure.HealthChecks;
+using ThreatLock.Infrastructure.Persistence;
 
 namespace ThreatLock.Infrastructure;
 
@@ -47,6 +49,13 @@ public static class ServiceCollectionExtensions
             options.BacklogPolicy = BacklogPolicy.FailFast;
             return ConnectionMultiplexer.Connect(options);
         });
+
+        // EF Core reuses the same NpgsqlDataSource (and so the same connection pool).
+        services.AddDbContext<ThreatLockDbContext>((sp, options) =>
+            DbContextConfiguration.Configure(options, sp.GetRequiredService<NpgsqlDataSource>()));
+
+        // Hosts that act for a tenant (the API) register their own ITenantContext; TryAdd keeps it.
+        services.TryAddScoped<ITenantContext, NoTenantContext>();
 
         services.AddHealthChecks()
             .AddCheck<PostgresHealthCheck>("postgres", tags: [ReadyTag], timeout: TimeSpan.FromSeconds(3))

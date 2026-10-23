@@ -62,6 +62,27 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **When:** M2, then forever.
 - **Watch out:** taking `orgId` from the request body or URL. Always take it from the authenticated principal.
 
+### 1.8 Password storage and lockout [FG 25]
+
+- **What:** never store passwords, store a *slow* salted hash. ASP.NET Core Identity uses PBKDF2 (HMAC-SHA512, 100,000 iterations): checking one guess costs tens of milliseconds, which is nothing for a user and ruinous for someone trying billions of guesses against a stolen database. *Lockout* stops online guessing: 5 wrong passwords in a row lock the account for 15 minutes.
+- **Why:** M2's login. Length beats complexity rules (NIST SP 800-63B), so we require 12+ characters and nothing else.
+- **When:** M2.
+- **Watch out:** lockout is itself a denial-of-service lever (anyone can lock *your* account by typing your email wrong 5 times). Real systems add per-IP rate limits and CAPTCHAs; we note it and move on.
+
+### 1.9 User enumeration
+
+- **What:** any difference in how the server answers "wrong password" versus "no such user" (message, status code, *or response time*) tells an attacker which emails have accounts, giving them a target list for phishing and password guessing.
+- **Why:** ThreatLock answers both with the same 401 and the same text, and for unknown or locked accounts it still verifies a dummy hash, so both paths take about the same time.
+- **When:** M2 (`DummyPasswordHash`).
+- **Watch out:** sign-up necessarily reveals "that email is taken". That's an accepted trade-off here; high-security systems email the address instead of answering inline.
+
+### 1.10 Object-level authorization and mass assignment [FG 25.10, 25.11]
+
+- **What:** *Object-level authorization* means checking, for every single record, that this caller may touch it, not just that they're logged in. *Mass assignment* is when an API copies request fields straight onto a database object, so a client can set fields it shouldn't (`"orgId": "<someone else's>"`).
+- **Why:** notes are filtered by org (EF Core query filter) *and* by owner-or-shared; org and owner are always taken from the token. Tests send other orgs' ids and smuggled `orgId` fields to prove both.
+- **When:** M2.
+- **Watch out:** returning 403 for "exists but not yours" leaks existence. We return 404 unless the caller could already see the item.
+
 ---
 
 ## Part 2. Moving events reliably
@@ -203,6 +224,13 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **What:** a library that starts real Docker containers (PostgreSQL, Redis) from inside a test and throws them away afterwards.
 - **Why:** `SKIP LOCKED`, advisory locks, `inet` columns and Redis Streams can't be faked convincingly. Test against the real thing.
 - **When:** M1 onwards.
+
+### 6.4 Dependency-injection lifetimes and captive dependencies
+
+- **What:** the DI container creates services as *singleton* (one per app), *scoped* (one per HTTP request) or *transient* (new every time). A singleton that holds a scoped service keeps that one instance forever, so a per-request object leaks across requests and threads. That's a *captive dependency*.
+- **Why:** in M2 a singleton tried to take Identity's scoped password hasher; the container's scope validation (on in Development) refused to start. Fix: the singleton builds its own hasher from singleton options.
+- **When:** M2.
+- **Watch out:** the `DbContext` is scoped and not thread-safe. Never store one in a singleton or share one between parallel tasks.
 
 ---
 
