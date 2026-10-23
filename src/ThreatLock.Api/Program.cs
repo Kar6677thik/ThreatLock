@@ -24,6 +24,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddThreatLockInfrastructure();
 builder.Services.AddThreatLockAuth();
+builder.Services.AddThreatLockForwardedHeaders();
 
 // Errors come back as RFC 9457 problem+json without stack traces (SPEC §13).
 builder.Services.AddProblemDetails();
@@ -42,6 +43,8 @@ if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
     await scope.ServiceProvider.GetRequiredService<ThreatLockDbContext>().Database.MigrateAsync();
 }
 
+// First in the pipeline, so everything after it sees the real client IP (ADR-0007).
+app.UseForwardedHeaders();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseAuthentication();

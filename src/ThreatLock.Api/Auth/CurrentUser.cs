@@ -23,6 +23,10 @@ public sealed class CurrentUser(IHttpContextAccessor accessor) : ITenantContext
     public Guid RequiredOrgId => OrgId
         ?? throw new InvalidOperationException("No authenticated user on this request.");
 
+    /// <summary>The session behind this request's token (SPEC §6).</summary>
+    public Guid SessionId => ReadGuid(ClaimNames.SessionId)
+        ?? throw new InvalidOperationException("Token has no session id.");
+
     public bool IsInRole(string role) => Principal?.IsInRole(role) == true;
 
     private Guid? ReadGuid(string claim) =>

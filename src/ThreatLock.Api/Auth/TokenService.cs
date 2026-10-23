@@ -13,7 +13,7 @@ public sealed class TokenService(IOptions<AuthOptions> options, TimeProvider tim
 {
     private readonly JsonWebTokenHandler handler = new();
 
-    public IssuedToken Issue(AppUser user, IEnumerable<string> roles)
+    public IssuedToken Issue(AppUser user, IEnumerable<string> roles, Guid sessionId)
     {
         var auth = options.Value;
         var now = time.GetUtcNow();
@@ -23,6 +23,7 @@ public sealed class TokenService(IOptions<AuthOptions> options, TimeProvider tim
         {
             new(ClaimNames.Subject, user.Id.ToString()),
             new(ClaimNames.Org, user.OrgId.ToString()),
+            new(ClaimNames.SessionId, sessionId.ToString()),
             new(ClaimNames.Email, user.Email ?? ""),
             new(ClaimNames.Name, user.DisplayName),
             // A unique id per token. Not used yet; a deny-list of jti values is one of the

@@ -15,6 +15,8 @@ public static class AuthSetup
             .BindConfiguration(AuthOptions.SectionName)
             .Validate(AuthOptions.HasValidSigningKey, "Auth:SigningKey must be base64 and at least 32 bytes")
             .Validate(o => o.AccessTokenMinutes is > 0 and <= 24 * 60, "Auth:AccessTokenMinutes must be 1..1440")
+            .Validate(o => o.SessionIdleTimeout > TimeSpan.Zero && o.SessionAbsoluteTimeout >= o.SessionIdleTimeout,
+                "Auth:SessionIdleTimeout must be positive and no longer than Auth:SessionAbsoluteTimeout")
             .ValidateOnStart();
 
         // AddIdentityCore = user and role management without Identity's cookie sign-in UI;
@@ -39,6 +41,7 @@ public static class AuthSetup
         services.AddSingleton<TokenService>();
         services.AddHttpContextAccessor();
         services.AddScoped<CurrentUser>();
+        services.AddScoped<SessionService>();
         services.AddScoped<ITenantContext>(sp => sp.GetRequiredService<CurrentUser>());
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
@@ -51,6 +54,8 @@ public static class AuthSetup
                 // Keep claim names as they are in the token ("sub", "roles") instead of
                 // rewriting them to long WS-Federation URIs.
                 jwt.MapInboundClaims = false;
+                // After the token itself checks out, check its session is still alive.
+                jwt.Events = SessionValidation.Events();
                 jwt.TokenValidationParameters = new TokenValidationParameters
                 {
                     // Decoding is not validating (concepts.md §1.3). All of these are checked:

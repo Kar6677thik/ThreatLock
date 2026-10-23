@@ -9,6 +9,9 @@ public static class ClaimNames
 {
     public const string Subject = "sub";
     public const string Org = "org";
+
+    /// <summary>Session id: the server-side session this token belongs to (SPEC §6.3).</summary>
+    public const string SessionId = "sid";
     public const string Roles = "roles";
     public const string Email = "email";
     public const string Name = "name";
