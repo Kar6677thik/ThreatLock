@@ -7,7 +7,7 @@ One file per milestone, written **during** the work. It's the story of the build
 | M0 Specification | [M0-specification.md](M0-specification.md) |
 | M1 Skeleton | [M1-skeleton.md](M1-skeleton.md) |
 | M2 Identity, orgs, notes | [M2-identity-orgs-notes.md](M2-identity-orgs-notes.md) |
-| M3 Real sessions | *not started* |
+| M3 Real sessions | [M3-real-sessions.md](M3-real-sessions.md) |
 | M4 Event pipeline + D1, D2 | *not started* |
 | M5 Decision framework + admin UI | *not started* |
 | M6 Response orchestrator | *not started* |
