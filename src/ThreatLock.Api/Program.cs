@@ -1,7 +1,12 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
 using ThreatLock.Api;
+using ThreatLock.Api.Admin;
+using ThreatLock.Api.Auth;
+using ThreatLock.Api.Notes;
 using ThreatLock.Core;
 using ThreatLock.Infrastructure;
+using ThreatLock.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,32 +23,51 @@ if (!builder.Environment.IsDevelopment())
 builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddThreatLockInfrastructure();
+builder.Services.AddThreatLockAuth();
 
 // Errors come back as RFC 9457 problem+json without stack traces (SPEC §13).
 builder.Services.AddProblemDetails();
 
+// Validates [Required], [StringLength] etc. on request records before the endpoint runs and
+// answers 400 with the field errors (.NET 10 minimal-API validation, source-generated).
+builder.Services.AddValidation();
+
 var app = builder.Build();
+
+// Development and tests create/upgrade the schema at startup. Deployments run migrations as a
+// separate step with a more privileged database role (SPEC §19, M10).
+if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    await scope.ServiceProvider.GetRequiredService<ThreatLockDbContext>().Database.MigrateAsync();
+}
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Liveness: "is the process running?" Runs no checks, so a database outage does not make
 // Kubernetes restart a perfectly healthy API process.
-app.MapHealthChecks("/healthz", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/healthz", new HealthCheckOptions { Predicate = _ => false }).AllowAnonymous();
 
 // Readiness: "should this instance receive traffic?" Requires PostgreSQL and Redis.
 app.MapHealthChecks("/readyz", new HealthCheckOptions
 {
     Predicate = check => check.Tags.Contains(ServiceCollectionExtensions.ReadyTag),
     ResponseWriter = HealthResponseWriter.WriteAsync,
-});
+}).AllowAnonymous();
 
 app.MapGet("/api/info", (IHostEnvironment env) => new
 {
     name = AppInfo.Name,
     version = AppInfo.Version,
     environment = env.EnvironmentName,
-});
+}).AllowAnonymous();
+
+app.MapAuthEndpoints();
+app.MapNoteEndpoints();
+app.MapUserAdminEndpoints();
 
 StartupLog.Starting(app.Logger, AppInfo.Name, "API", AppInfo.Version, app.Environment.EnvironmentName);
 
