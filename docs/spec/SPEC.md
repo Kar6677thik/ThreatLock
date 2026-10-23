@@ -619,7 +619,7 @@ erDiagram
 | Table | Key columns and constraints |
 | --- | --- |
 | `orgs` | `id`, `name`, `slug UNIQUE`, `created_at` |
-| `users` (+ Identity tables `AspNetRoles`, `AspNetUserRoles`, ...) | Identity columns + `org_id`, `security_locked_at`, `security_locked_reason` |
+| `users` (+ Identity tables renamed to `roles`, `user_roles`, `user_claims`, `user_logins`, `user_tokens`, `role_claims`) | Identity columns + `org_id`, `display_name`, `created_at`; `UNIQUE (normalized_email)`. `security_locked_at`, `security_locked_reason` arrive in M6 |
 | `sessions` | `id`, `user_id`, `org_id`, `created_at`, `created_ip inet`, `created_device_id`, `created_user_agent`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `revoked_reason`, `revoked_by_anomaly_id`. Index `(user_id) WHERE revoked_at IS NULL` |
 | `refresh_tokens` | `id`, `session_id`, `token_hash bytea UNIQUE`, `created_at`, `used_at`, `replaced_by_id` |
 | `user_devices` | `PK (user_id, device_id)`, `first_seen_at`, `last_seen_at`, `last_user_agent` |
@@ -651,8 +651,9 @@ JSON over HTTPS. Errors use RFC 9457 Problem Details (`application/problem+json`
 | `GET /api/me/sessions`, `DELETE /api/me/sessions/{sid}` | user | See and revoke own sessions |
 | `GET/POST /api/notes`, `GET/PUT/DELETE /api/notes/{id}` | user | Notes CRUD (owner or shared-in-org read) |
 | `GET /api/notes/export` | user | Bulk export of everything readable (JSON) |
-| `GET /api/admin/users`, `GET /api/admin/users/{id}/sessions` | admin+ | Users and their sessions |
-| `POST /api/admin/users/{id}/revoke-sessions` | security_admin, owner | Manual revoke |
+| `GET /api/admin/users`, `GET /api/admin/users/{id}/sessions` | admin+ | Users (with roles) and their sessions |
+| `POST /api/admin/users` | admin+ (only owners may grant `admin`, `security_admin`, `owner`) | Create a user in the caller's org; every user is also a `member` |
+| `POST /api/admin/users/{id}/revoke-sessions` | security_admin, owner | Manual revoke. In M2 this only rotates the security stamp and has no effect on issued tokens (Break B1); real from M3 |
 | `POST /api/admin/users/{id}/unlock` | security_admin, owner | Clear security lock |
 | `PUT /api/admin/users/{id}/roles` | owner | Change roles |
 | `GET /api/admin/anomalies?decision=&detector=`, `GET /api/admin/anomalies/{id}` | admin+ | List and inspect, with timeline |

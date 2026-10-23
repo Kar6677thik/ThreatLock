@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-22
-- Milestone: M2 (resolution), M4 (simulation)
+- Milestone: M3 (resolution, moved from M2 because sessions are the first thing to record an IP), M4 (simulation)
 
 ## Context
 
