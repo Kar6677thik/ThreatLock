@@ -36,3 +36,13 @@ export interface NoteRequest {
   body: string
   shared: boolean
 }
+
+export interface SessionView {
+  id: string
+  createdAt: string
+  lastSeenAt: string
+  ip: string | null
+  deviceId: string | null
+  userAgent: string | null
+  current: boolean
+}

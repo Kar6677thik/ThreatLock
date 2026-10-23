@@ -6,7 +6,7 @@ import { SystemStatus } from '../components/SystemStatus'
 type Mode = 'login' | 'register'
 
 export function LoginPage() {
-  const { login, register } = useAuth()
+  const { login, register, signedOutReason } = useAuth()
   const [mode, setMode] = useState<Mode>('login')
   const [orgName, setOrgName] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -32,6 +32,7 @@ export function LoginPage() {
   return (
     <section>
       <h2>{mode === 'login' ? 'Sign in' : 'Create an organisation'}</h2>
+      {signedOutReason && <p role="status">{signedOutReason}</p>}
       <form onSubmit={submit} className="stack">
         {mode === 'register' && (
           <>
