@@ -17,7 +17,7 @@ public class HealthEndpointTests(ContainersFixture containers)
     [Fact]
     public async Task Healthz_is_ok_when_process_is_running()
     {
-        await using var factory = new ThreatLockApiFactory(containers);
+        var factory = containers.Api;
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/healthz", TestContext.Current.CancellationToken);
@@ -28,7 +28,7 @@ public class HealthEndpointTests(ContainersFixture containers)
     [Fact]
     public async Task Readyz_is_ok_when_postgres_and_redis_are_reachable()
     {
-        await using var factory = new ThreatLockApiFactory(containers);
+        var factory = containers.Api;
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/readyz", TestContext.Current.CancellationToken);

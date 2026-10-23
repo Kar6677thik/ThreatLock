@@ -8,10 +8,9 @@ public class InfoEndpointTests(ContainersFixture containers)
     private sealed record InfoResponse(string Name, string Version, string Environment);
 
     [Fact]
-    public async Task Info_reports_name_version_and_environment()
+    public async Task Info_reports_name_version_and_environment_without_authentication()
     {
-        await using var factory = new ThreatLockApiFactory(containers);
-        using var client = factory.CreateClient();
+        using var client = containers.Api.CreateClient();
 
         var info = await client.GetFromJsonAsync<InfoResponse>("/api/info", TestContext.Current.CancellationToken);
 
