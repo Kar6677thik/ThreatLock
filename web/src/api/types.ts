@@ -146,6 +146,31 @@ export interface AdminUserView {
   securityLockedReason?: string | null
 }
 
+// ---- Audit (M7) ----
+
+export interface AuditEntryView {
+  seq: number
+  occurredAt: string
+  actorType: 'user' | 'admin' | 'system'
+  actorId: string | null
+  actorName: string | null
+  action: string
+  targetType: string | null
+  targetId: string | null
+  anomalyId: string | null
+  details: Record<string, unknown>
+  prevHash: string
+  entryHash: string
+}
+
+export interface VerifyResult {
+  ok: boolean
+  entries: number
+  head: string | null
+  firstBrokenSeq?: number | null
+  reason?: 'hash_mismatch' | 'chain_break' | 'seq_gap' | 'anchor_mismatch' | null
+}
+
 export const ROLES = ['member', 'admin', 'security_admin', 'owner'] as const
 export const DETECTORS: Record<string, string> = { tor: 'Tor exit node (D1)', impossible_travel: 'Impossible travel (D2)' }
 export const SEVERITIES: Severity[] = ['low', 'medium', 'high', 'critical']

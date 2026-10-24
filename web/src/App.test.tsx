@@ -124,7 +124,7 @@ describe('App', () => {
 
     render(<App />)
 
-    for (const name of ['Anomalies', 'Users', 'Policy', 'Jobs']) {
+    for (const name of ['Anomalies', 'Users', 'Policy', 'Jobs', 'Audit log']) {
       expect(await screen.findByRole('link', { name })).toBeInTheDocument()
     }
   })

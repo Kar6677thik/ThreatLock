@@ -161,3 +161,15 @@ footer {
 .timeline li {
   margin: 0.2em 0;
 }
+
+/* M7: audit verification */
+.verified {
+  border-left: 4px solid #2e7d32;
+  padding-left: 0.75rem;
+}
+
+.tampered {
+  border-left: 4px solid #c62828;
+  padding-left: 0.75rem;
+  color: #c62828;
+}

@@ -9,6 +9,7 @@ import { NotesPage } from './pages/NotesPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { AnomaliesPage } from './pages/admin/AnomaliesPage'
 import { AnomalyDetailPage } from './pages/admin/AnomalyDetailPage'
+import { AuditPage } from './pages/admin/AuditPage'
 import { JobsPage } from './pages/admin/JobsPage'
 import { NotificationsPage } from './pages/admin/NotificationsPage'
 import { PolicyPage } from './pages/admin/PolicyPage'
@@ -80,6 +81,7 @@ function Shell() {
         {isAdmin(user) && <NavLink to="/admin/users">Users</NavLink>}
         {isSecurityAdmin(user) && <NavLink to="/admin/policy">Policy</NavLink>}
         {isSecurityAdmin(user) && <NavLink to="/admin/jobs">Jobs</NavLink>}
+        {isSecurityAdmin(user) && <NavLink to="/admin/audit">Audit log</NavLink>}
       </nav>
       <Routes>
         <Route path="/notes" element={<NotesPage />} />
@@ -92,6 +94,7 @@ function Shell() {
         )}
         {isSecurityAdmin(user) && <Route path="/admin/policy" element={<PolicyPage />} />}
         {isSecurityAdmin(user) && <Route path="/admin/jobs" element={<JobsPage />} />}
+        {isSecurityAdmin(user) && <Route path="/admin/audit" element={<AuditPage />} />}
         <Route path="*" element={<Navigate to="/notes" replace />} />
       </Routes>
       <footer>
