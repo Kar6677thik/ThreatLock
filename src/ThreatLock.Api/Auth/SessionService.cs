@@ -86,8 +86,10 @@ public sealed class SessionService(
             return new(RefreshStatus.Conflict, SessionId: session.Id, UserId: session.UserId, OrgId: session.OrgId);
         }
 
+        // A locked account can't stay signed in through refresh either. The response revokes
+        // every session when it locks, so this is defence in depth.
         var user = await users.FindByIdAsync(session.UserId.ToString());
-        if (user is null) return new(RefreshStatus.Invalid);
+        if (user is null || user.SecurityLockedAt is not null) return new(RefreshStatus.Invalid);
 
         var (plain, next) = NewRefreshToken(session.Id, now);
         db.RefreshTokens.Add(next);

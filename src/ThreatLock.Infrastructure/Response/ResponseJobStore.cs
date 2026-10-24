@@ -15,6 +15,9 @@ public sealed class ResponseOptions
 
     /// <summary>How long a claimed job is ours. If we crash, another Worker takes it after this.</summary>
     public TimeSpan Lease { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>Whether this process runs response jobs at all. Tests switch it off for extra Workers.</summary>
+    public bool Enabled { get; set; } = true;
 }
 
 /// <summary>A job as claimed by a Worker: everything needed to run it.</summary>
@@ -121,6 +124,49 @@ public sealed class ResponseJobStore(NpgsqlDataSource db, IOptions<ResponseOptio
         command.Parameters.AddWithValue(job.Id);
         command.Parameters.AddWithValue(time.GetUtcNow());
         return await command.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    /// <summary>
+    /// Hands a job back when this Worker is shutting down mid-run (a deploy, a scale-down), so
+    /// another Worker can start it now instead of after the lease. The attempt isn't counted: the
+    /// job didn't fail, we stopped. A crash can't do this, which is what the lease is for.
+    /// </summary>
+    public async Task ReleaseAsync(ClaimedJob job, CancellationToken ct)
+    {
+        await using var command = db.CreateCommand(
+            $"""
+            UPDATE response_jobs SET status = '{JobStatuses.Pending}', locked_until = NULL, attempts = attempts - 1, next_attempt_at = $2
+            WHERE id = $1 AND status = '{JobStatuses.Running}'
+            """);
+        command.Parameters.AddWithValue(job.Id);
+        command.Parameters.AddWithValue(time.GetUtcNow());
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
+    /// An admin's "Retry" on a dead job: back to pending with a fresh set of attempts. Only dead
+    /// jobs, and only in the admin's org. The step markers are kept, so steps that had already
+    /// succeeded before the job died are not repeated.
+    /// </summary>
+    public async Task<bool> RetryAsync(Guid jobId, Guid orgId, CancellationToken ct)
+    {
+        await using var connection = await db.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        await using var command = new NpgsqlCommand(
+            $"""
+            UPDATE response_jobs SET status = '{JobStatuses.Pending}', attempts = 0, next_attempt_at = $3, finished_at = NULL
+            WHERE id = $1 AND org_id = $2 AND status = '{JobStatuses.Dead}'
+            """, connection, transaction);
+        command.Parameters.AddWithValue(jobId);
+        command.Parameters.AddWithValue(orgId);
+        command.Parameters.AddWithValue(time.GetUtcNow());
+        if (await command.ExecuteNonQueryAsync(ct) == 0) return false;
+
+        await using var notify = new NpgsqlCommand($"SELECT pg_notify('{Channel}', $1)", connection, transaction);
+        notify.Parameters.AddWithValue(jobId.ToString());
+        await notify.ExecuteNonQueryAsync(ct);
+        await transaction.CommitAsync(ct);
+        return true;
     }
 
     /// <summary>

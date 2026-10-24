@@ -22,6 +22,8 @@ public sealed partial class ResponseOrchestrator(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!options.Value.Enabled) return;
+
         NpgsqlConnection? listener = null;
         try
         {
@@ -64,7 +66,22 @@ public sealed partial class ResponseOrchestrator(
         {
             await executor.ExecuteAsync(job, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Stopping: give the job back rather than sit on it for the rest of the lease. Every
+            // step is idempotent, so whoever picks it up can safely redo whatever we started.
+            try
+            {
+                await jobs.ReleaseAsync(job, CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is NpgsqlException or TimeoutException)
+            {
+                LogClaimFailed(ex);   // the lease covers this too
+            }
+
+            throw;
+        }
+        catch (Exception ex)
         {
             try
             {

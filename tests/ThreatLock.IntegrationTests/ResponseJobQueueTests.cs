@@ -69,6 +69,20 @@ public class ResponseJobQueueTests(ContainersFixture containers)
     }
 
     [Fact]
+    public async Task A_worker_shutting_down_hands_its_job_back_without_using_up_an_attempt()
+    {
+        await using var h = await ResponseHarness.CreateAsync(containers);
+        var (org, users) = await h.SeedOrgAsync(["owner"]);
+        await h.RespondedAnomalyAsync(org, users[0]);
+
+        var job = await h.Jobs.ClaimAsync(Ct);
+        await h.Jobs.ReleaseAsync(job!, Ct);
+        var again = await h.Jobs.ClaimAsync(Ct);   // at once: no waiting for the lease
+
+        Assert.Equal((job!.Id, 1), (again!.Id, again.Attempts));
+    }
+
+    [Fact]
     public async Task Failures_back_off_and_the_fifth_makes_the_job_dead()
     {
         await using var h = await ResponseHarness.CreateAsync(containers);

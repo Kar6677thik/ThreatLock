@@ -21,7 +21,10 @@ public sealed record CreateUserRequest(
 
 public sealed record SetRolesRequest([property: Required] string[] Roles);
 
-public sealed record AdminUserView(Guid Id, string Email, string DisplayName, IReadOnlyList<string> Roles, DateTimeOffset CreatedAt);
+/// <param name="SecurityLockedAt">Set when a revoke_and_lock response locked the account (M6).</param>
+public sealed record AdminUserView(
+    Guid Id, string Email, string DisplayName, IReadOnlyList<string> Roles, DateTimeOffset CreatedAt,
+    DateTimeOffset? SecurityLockedAt = null, string? SecurityLockedReason = null);
 
 public sealed record RevokeSessionsResponse(Guid UserId, int RevokedSessions);
 
@@ -40,6 +43,7 @@ public static class UserAdminEndpoints
         admin.MapPut("/{id:guid}/roles", SetRoles).RequireAuthorization(Policies.Owner);
         admin.MapGet("/{id:guid}/sessions", UserSessions).RequireAuthorization(Policies.Admin);
         admin.MapPost("/{id:guid}/revoke-sessions", RevokeSessions).RequireAuthorization(Policies.SecurityAdmin);
+        admin.MapPost("/{id:guid}/unlock", Unlock).RequireAuthorization(Policies.SecurityAdmin);
     }
 
     private static async Task<Ok<List<AdminUserView>>> List(ThreatLockDbContext db, CurrentUser me, CancellationToken ct)
@@ -56,7 +60,9 @@ public static class UserAdminEndpoints
                     .Join(db.Roles, ur => ur.RoleId, r => r.Id, (_, r) => r.Name!)
                     .OrderBy(name => name)
                     .ToList(),
-                u.CreatedAt))
+                u.CreatedAt,
+                u.SecurityLockedAt,
+                u.SecurityLockedReason))
             .ToListAsync(ct);
         return TypedResults.Ok(users);
     }
@@ -121,7 +127,8 @@ public static class UserAdminEndpoints
         if (!added.Succeeded) return IdentityProblem(added);
         await transaction.CommitAsync(ct);
 
-        return TypedResults.Ok(new AdminUserView(user.Id, user.Email!, user.DisplayName, roles, user.CreatedAt));
+        return TypedResults.Ok(new AdminUserView(user.Id, user.Email!, user.DisplayName, roles, user.CreatedAt,
+            user.SecurityLockedAt, user.SecurityLockedReason));
     }
 
     /// <summary>A user's live sessions, for an admin deciding whether to revoke them.</summary>
@@ -152,6 +159,24 @@ public static class UserAdminEndpoints
         }
 
         return TypedResults.Ok(new RevokeSessionsResponse(id, revoked.Count));
+    }
+
+    /// <summary>
+    /// Clears a security lock (SPEC §10.3): password reset is out of scope, so an admin vouching
+    /// for the user is the way back in. Idempotent: unlocking an unlocked user is a no-op.
+    /// Audited from M7.
+    /// </summary>
+    private static async Task<Results<NoContent, NotFound>> Unlock(Guid id, ThreatLockDbContext db, CurrentUser me, CancellationToken ct)
+    {
+        var orgId = me.RequiredOrgId;
+        if (!await db.Users.AnyAsync(u => u.Id == id && u.OrgId == orgId, ct)) return TypedResults.NotFound();
+
+        await db.Users
+            .Where(u => u.Id == id && u.OrgId == orgId)
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(u => u.SecurityLockedAt, (DateTimeOffset?)null)
+                .SetProperty(u => u.SecurityLockedReason, (string?)null), ct);
+        return TypedResults.NoContent();
     }
 
     /// <summary>Validates role names and always includes "member". Null means an unknown role was sent.</summary>
