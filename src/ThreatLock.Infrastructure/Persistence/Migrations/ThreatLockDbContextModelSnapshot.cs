@@ -543,9 +543,17 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("anomaly_id");
 
+                    b.Property<int>("Count")
+                        .HasColumnType("integer")
+                        .HasColumnName("count");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<Guid>("LastAnomalyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_anomaly_id");
 
                     b.Property<Guid>("OrgId")
                         .HasColumnType("uuid")
@@ -559,20 +567,33 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("recipient_user_id");
 
+                    b.Property<Guid>("SubjectUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("subject_user_id");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("title");
 
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
                     b.HasKey("Id")
                         .HasName("pk_notifications");
 
-                    b.HasIndex("AnomalyId")
-                        .HasDatabaseName("ix_notifications_anomaly_id");
+                    b.HasIndex("AnomalyId", "RecipientUserId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_notifications_anomaly_id_recipient_user_id");
 
                     b.HasIndex("RecipientUserId", "CreatedAt")
                         .HasDatabaseName("ix_notifications_recipient_user_id_created_at");
+
+                    b.HasIndex("RecipientUserId", "SubjectUserId")
+                        .HasDatabaseName("ix_notifications_recipient_user_id_subject_user_id")
+                        .HasFilter("read_at IS NULL");
 
                     b.ToTable("notifications", (string)null);
                 });
@@ -727,6 +748,10 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("next_attempt_at");
 
+                    b.Property<DateTimeOffset?>("NotifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("notified_at");
+
                     b.PrimitiveCollection<string[]>("NotifyRoles")
                         .IsRequired()
                         .HasColumnType("text[]")
@@ -735,6 +760,10 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("OrgId")
                         .HasColumnType("uuid")
                         .HasColumnName("org_id");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at");
 
                     b.Property<string>("Status")
                         .IsRequired()

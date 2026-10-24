@@ -161,6 +161,11 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
             notification.HasOne<AppUser>().WithMany().HasForeignKey(n => n.RecipientUserId).OnDelete(DeleteBehavior.Cascade);
             notification.HasOne<Anomaly>().WithMany().HasForeignKey(n => n.AnomalyId).OnDelete(DeleteBehavior.Cascade);
             notification.HasIndex(n => new { n.RecipientUserId, n.CreatedAt });
+            // The backstop behind the job's notified_at marker: whatever goes wrong, one anomaly
+            // can't open two inbox entries for the same person.
+            notification.HasIndex(n => new { n.AnomalyId, n.RecipientUserId }).IsUnique();
+            // "Is there an unread entry about this user for this admin?" (grouping).
+            notification.HasIndex(n => new { n.RecipientUserId, n.SubjectUserId }).HasFilter("read_at IS NULL");
         });
     }
 }

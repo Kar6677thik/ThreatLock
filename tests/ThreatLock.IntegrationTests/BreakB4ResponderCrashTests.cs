@@ -6,7 +6,11 @@ namespace ThreatLock.IntegrationTests;
 
 /// <summary>
 /// Break B4 (SPEC §15): 100 response jobs, each one "crashing" the Worker once at a different
-/// step, then being retried after its lease expires. Counts the notifications admins end up with.
+/// step, then being retried after its lease expires. Counts what the admins end up with.
+/// <para>
+/// The Break half lives at the git tag <c>break/b4-naive-responder</c>, where the same run gave
+/// 532 deliveries instead of 300 and 34 stale cache entries. This is the Prove half.
+/// </para>
 /// </summary>
 public class BreakB4ResponderCrashTests(ContainersFixture containers)
 {
@@ -14,8 +18,10 @@ public class BreakB4ResponderCrashTests(ContainersFixture containers)
 
     public const int Crashes = 100;
 
+    /// <param name="Deliveries">Anomalies delivered to inboxes, counting each grouped one (<c>SUM(count)</c>).</param>
+    /// <param name="Rows">Inbox entries: fewer than deliveries, because repeats are grouped.</param>
     /// <param name="StaleCache">Sessions revoked in PostgreSQL whose Redis entry still says "active".</param>
-    public sealed record Outcome(int Anomalies, long Notifications, long Expected, long Duplicates, int StaleCache);
+    public sealed record Outcome(int Anomalies, long Deliveries, long Rows, long Expected, long Duplicates, int StaleCache);
 
     /// <summary>
     /// Three admins: the owner, a plain admin, and one person who is both admin and security admin.
@@ -44,16 +50,15 @@ public class BreakB4ResponderCrashTests(ContainersFixture containers)
             await h.Executor.ExecuteAsync(retry, Ct);
         }
 
-        var notifications = await h.ScalarAsync<long>("SELECT count(*) FROM notifications WHERE org_id = $1", org);
-        var distinct = await h.ScalarAsync<long>(
-            "SELECT count(*) FROM (SELECT DISTINCT anomaly_id, recipient_user_id FROM notifications WHERE org_id = $1) d", org);
+        var deliveries = await h.ScalarAsync<long>("SELECT COALESCE(SUM(count), 0) FROM notifications WHERE org_id = $1", org);
+        var rows = await h.ScalarAsync<long>("SELECT count(*) FROM notifications WHERE org_id = $1", org);
         var stale = 0;
         foreach (var sid in sessions)
         {
             if (await h.Redis.StringGetAsync($"tl:sess:{sid}") == "a") stale++;
         }
 
-        return new Outcome(Crashes, notifications, Crashes * 3, notifications - distinct, stale);
+        return new Outcome(Crashes, deliveries, rows, Crashes * 3, deliveries - Crashes * 3, stale);
     }
 
     /// <summary>scripts/experiments/b4-responder-crashes.sh sets B4_REPORT to collect the numbers.</summary>
@@ -64,15 +69,14 @@ public class BreakB4ResponderCrashTests(ContainersFixture containers)
     }
 
     [Fact]
-    public async Task Break_the_naive_responder_duplicates_notifications_after_a_crash()
+    public async Task Prove_idempotent_steps_deliver_each_anomaly_once_per_person_despite_crashes()
     {
         await using var h = await ResponseHarness.CreateAsync(containers);
 
         var outcome = await RunAsync(h);
-        await ReportAsync("naive", outcome);
+        await ReportAsync("idempotent", outcome);
 
-        Assert.True(outcome.Notifications > outcome.Expected, $"expected duplicates, got {outcome}");
-        Assert.True(outcome.Duplicates > 0);
-        Assert.True(outcome.StaleCache > 0, "a crash between the revoke and the Redis write should leave a stale 'active'");
+        Assert.Equal((outcome.Expected, 0L, 0), (outcome.Deliveries, outcome.Duplicates, outcome.StaleCache));
+        Assert.True(outcome.Rows < outcome.Deliveries, "repeats about one user within an hour should be grouped");
     }
 }

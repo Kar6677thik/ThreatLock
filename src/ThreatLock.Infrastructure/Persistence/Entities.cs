@@ -192,16 +192,37 @@ public sealed class ResponseJob
     public string? LastError { get; set; }
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset? FinishedAt { get; set; }
+
+    /// <summary>
+    /// Step markers. Each is set in the same transaction as the step's effect, so "done" and
+    /// "recorded as done" can't disagree: a retry skips a step whose marker is set.
+    /// </summary>
+    public DateTimeOffset? RevokedAt { get; set; }
+
+    public DateTimeOffset? NotifiedAt { get; set; }
 }
 
-/// <summary>An entry in an admin's in-app inbox (SPEC §10.4).</summary>
+/// <summary>
+/// An entry in an admin's in-app inbox (SPEC §10.4). Repeated anomalies about the same user
+/// within an hour are grouped into one unread entry (<see cref="Count"/>, <see cref="LastAnomalyId"/>),
+/// so an attack loop doesn't bury the admins.
+/// </summary>
 public sealed class Notification
 {
     public Guid Id { get; init; } = Guid.CreateVersion7();
     public Guid OrgId { get; init; }
     public Guid RecipientUserId { get; init; }
+
+    /// <summary>The user the anomalies are about: the grouping key, with the recipient.</summary>
+    public Guid SubjectUserId { get; init; }
+
+    /// <summary>The anomaly that opened this entry. <c>UNIQUE (anomaly_id, recipient_user_id)</c>.</summary>
     public Guid AnomalyId { get; init; }
+
+    public Guid LastAnomalyId { get; set; }
+    public int Count { get; set; } = 1;
     public required string Title { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? ReadAt { get; set; }
 }
