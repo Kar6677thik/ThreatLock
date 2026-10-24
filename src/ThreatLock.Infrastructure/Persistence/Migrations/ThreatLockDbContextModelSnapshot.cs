@@ -280,6 +280,10 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("policy_version");
 
+                    b.Property<DateTimeOffset?>("RespondedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("responded_at");
+
                     b.Property<Guid?>("SessionId")
                         .HasColumnType("uuid")
                         .HasColumnName("session_id");
@@ -438,6 +442,15 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("phone_number_confirmed");
 
+                    b.Property<DateTimeOffset?>("SecurityLockedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("security_locked_at");
+
+                    b.Property<string>("SecurityLockedReason")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("security_locked_reason");
+
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("text")
                         .HasColumnName("security_stamp");
@@ -517,6 +530,51 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_notes_org_id_owner_id");
 
                     b.ToTable("notes", (string)null);
+                });
+
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.Notification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AnomalyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("anomaly_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("OrgId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("org_id");
+
+                    b.Property<DateTimeOffset?>("ReadAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("read_at");
+
+                    b.Property<Guid>("RecipientUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("recipient_user_id");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("title");
+
+                    b.HasKey("Id")
+                        .HasName("pk_notifications");
+
+                    b.HasIndex("AnomalyId")
+                        .HasDatabaseName("ix_notifications_anomaly_id");
+
+                    b.HasIndex("RecipientUserId", "CreatedAt")
+                        .HasDatabaseName("ix_notifications_recipient_user_id_created_at");
+
+                    b.ToTable("notifications", (string)null);
                 });
 
             modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.Org", b =>
@@ -623,6 +681,84 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                     b.ToTable("refresh_tokens", (string)null);
                 });
 
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.ResponseJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("action");
+
+                    b.Property<Guid>("AnomalyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("anomaly_id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("Cutoff")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cutoff");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTimeOffset?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.PrimitiveCollection<string[]>("NotifyRoles")
+                        .IsRequired()
+                        .HasColumnType("text[]")
+                        .HasColumnName("notify_roles");
+
+                    b.Property<Guid>("OrgId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("org_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_response_jobs");
+
+                    b.HasIndex("AnomalyId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_response_jobs_anomaly_id");
+
+                    b.HasIndex("Status", "NextAttemptAt")
+                        .HasDatabaseName("ix_response_jobs_status_next_attempt_at");
+
+                    b.ToTable("response_jobs", (string)null);
+                });
+
             modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.Session", b =>
                 {
                     b.Property<Guid>("Id")
@@ -668,6 +804,10 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("revoked_at");
 
+                    b.Property<Guid?>("RevokedByAnomalyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("revoked_by_anomaly_id");
+
                     b.Property<string>("RevokedReason")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)")
@@ -682,6 +822,10 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("OrgId")
                         .HasDatabaseName("ix_sessions_org_id");
+
+                    b.HasIndex("RevokedByAnomalyId")
+                        .HasDatabaseName("ix_sessions_revoked_by_anomaly_id")
+                        .HasFilter("revoked_by_anomaly_id IS NOT NULL");
 
                     b.HasIndex("UserId")
                         .HasDatabaseName("ix_sessions_user_id_active")
@@ -816,6 +960,23 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_notes_users_owner_id");
                 });
 
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.Notification", b =>
+                {
+                    b.HasOne("ThreatLock.Infrastructure.Persistence.Anomaly", null)
+                        .WithMany()
+                        .HasForeignKey("AnomalyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_notifications_anomalies_anomaly_id");
+
+                    b.HasOne("ThreatLock.Infrastructure.Persistence.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("RecipientUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_notifications_users_recipient_user_id");
+                });
+
             modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.OrgPolicy", b =>
                 {
                     b.HasOne("ThreatLock.Infrastructure.Persistence.Org", null)
@@ -834,6 +995,16 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_refresh_tokens_sessions_session_id");
+                });
+
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.ResponseJob", b =>
+                {
+                    b.HasOne("ThreatLock.Infrastructure.Persistence.Anomaly", null)
+                        .WithMany()
+                        .HasForeignKey("AnomalyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_response_jobs_anomalies_anomaly_id");
                 });
 
             modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.Session", b =>

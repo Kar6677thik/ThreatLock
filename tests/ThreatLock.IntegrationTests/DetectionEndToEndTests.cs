@@ -91,8 +91,10 @@ public class DetectionEndToEndTests(ContainersFixture containers)
         await LoginFromAsync(TestGeoIpLookup.TorExitIp, member);
         var anomaly = (await AnomaliesAsync(owner, "tor"))[0];
         var otherOrg = await Api.RegisterOrgAsync("Other");
+        // Not `member`: from M6 the Tor login gets their sessions revoked, so they'd see 401.
+        var colleague = await Api.CreateUserAsync(owner, "Colleague");
 
-        Assert.Equal(HttpStatusCode.Forbidden, (await member.Client.GetAsync("/api/admin/anomalies", Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await colleague.Client.GetAsync("/api/admin/anomalies", Ct)).StatusCode);
         Assert.Empty((await otherOrg.Client.GetFromJsonAsync<List<AnomalyView>>("/api/admin/anomalies", Ct))!);
         Assert.Equal(HttpStatusCode.NotFound, (await otherOrg.Client.GetAsync($"/api/admin/anomalies/{anomaly.Id}", Ct)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await owner.Client.GetAsync($"/api/admin/anomalies/{anomaly.Id}", Ct)).StatusCode);

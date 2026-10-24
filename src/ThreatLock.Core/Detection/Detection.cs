@@ -13,6 +13,14 @@ public static class DetectorIds
 {
     public const string Tor = "tor";
     public const string ImpossibleTravel = "impossible_travel";
+
+    /// <summary>A human name for notifications and logs.</summary>
+    public static string DisplayName(string id) => id switch
+    {
+        Tor => "Tor exit node",
+        ImpossibleTravel => "Impossible travel",
+        _ => id,
+    };
 }
 
 /// <summary>

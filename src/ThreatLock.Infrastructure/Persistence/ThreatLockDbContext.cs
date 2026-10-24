@@ -15,6 +15,8 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
     public DbSet<Anomaly> Anomalies => Set<Anomaly>();
     public DbSet<TorExitSnapshot> TorExitSnapshots => Set<TorExitSnapshot>();
     public DbSet<OrgPolicy> OrgPolicies => Set<OrgPolicy>();
+    public DbSet<ResponseJob> ResponseJobs => Set<ResponseJob>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     /// <summary>
     /// Read by the query filter below. EF Core turns a reference to a DbContext member into a
@@ -50,6 +52,7 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
         {
             user.ToTable("users");
             user.Property(u => u.DisplayName).HasMaxLength(100);
+            user.Property(u => u.SecurityLockedReason).HasMaxLength(100);
 
             // Identity checks email uniqueness in code (RequireUniqueEmail), but two sign-ups
             // racing each other can both pass that check. Only the database can guarantee it.
@@ -84,6 +87,8 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
             // "All live sessions of this user" is the revocation query; a partial index keeps it
             // small because revoked sessions (the vast majority over time) aren't in it.
             session.HasIndex(s => s.UserId).HasFilter("revoked_at IS NULL").HasDatabaseName("ix_sessions_user_id_active");
+            // "Which sessions did this anomaly's response revoke?": re-marking them in Redis on a retry.
+            session.HasIndex(s => s.RevokedByAnomalyId).HasFilter("revoked_by_anomaly_id IS NOT NULL");
         });
 
         builder.Entity<RefreshToken>(token =>
@@ -136,6 +141,26 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
             policy.HasKey(p => new { p.OrgId, p.Version });
             policy.Property(p => p.Document).HasColumnType("jsonb");
             policy.HasOne<Org>().WithMany().HasForeignKey(p => p.OrgId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<ResponseJob>(job =>
+        {
+            job.Property(j => j.Action).HasMaxLength(20);
+            job.Property(j => j.Status).HasMaxLength(20);
+            job.Property(j => j.LastError).HasMaxLength(2000);
+            job.HasOne<Anomaly>().WithMany().HasForeignKey(j => j.AnomalyId).OnDelete(DeleteBehavior.Cascade);
+            // One job per anomaly, ever: a redelivered event can't start a second response.
+            job.HasIndex(j => j.AnomalyId).IsUnique();
+            // The claim query: "pending and due", plus expired leases on "running".
+            job.HasIndex(j => new { j.Status, j.NextAttemptAt });
+        });
+
+        builder.Entity<Notification>(notification =>
+        {
+            notification.Property(n => n.Title).HasMaxLength(200);
+            notification.HasOne<AppUser>().WithMany().HasForeignKey(n => n.RecipientUserId).OnDelete(DeleteBehavior.Cascade);
+            notification.HasOne<Anomaly>().WithMany().HasForeignKey(n => n.AnomalyId).OnDelete(DeleteBehavior.Cascade);
+            notification.HasIndex(n => new { n.RecipientUserId, n.CreatedAt });
         });
     }
 }

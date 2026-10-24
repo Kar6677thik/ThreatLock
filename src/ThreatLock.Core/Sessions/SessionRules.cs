@@ -7,6 +7,7 @@ public static class RevocationReasons
     public const string UserRevoked = "user_revoked";          // "sign out that device" from My sessions
     public const string AdminManual = "admin_manual";
     public const string RefreshTokenReused = "refresh_token_reused";
+    public const string AnomalyResponse = "anomaly_response";    // the response orchestrator (M6)
 }
 
 /// <summary>Lifetime settings for one session (SPEC §6.3).</summary>

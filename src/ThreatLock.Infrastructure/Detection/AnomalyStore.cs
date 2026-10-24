@@ -1,10 +1,12 @@
 using Npgsql;
 using ThreatLock.Core.Detection;
 using ThreatLock.Core.Policy;
+using ThreatLock.Core.Response;
+using ThreatLock.Infrastructure.Response;
 
 namespace ThreatLock.Infrastructure.Detection;
 
-public sealed record AnomalyUpsert(Guid Id, bool Created);
+public sealed record AnomalyUpsert(Guid Id, bool Created, Guid? JobId = null);
 
 /// <summary>Persists detection signals as anomalies, de-duplicated (SPEC §8.3).</summary>
 public sealed class AnomalyStore(NpgsqlDataSource db, TimeProvider time)
@@ -20,9 +22,16 @@ public sealed class AnomalyStore(NpgsqlDataSource db, TimeProvider time)
     /// </summary>
     /// <param name="decision">Stored only when the row is created: an anomaly is judged once, by
     /// the policy version in force when it was first detected (SPEC §9.1).</param>
-    public async Task<AnomalyUpsert> UpsertAsync(DetectionSignal signal, Decision decision, int policyVersion, CancellationToken ct)
+    /// <param name="plan">If not null and the anomaly is new, a response job is created in the
+    /// <em>same transaction</em> (SPEC §10.1): either both exist or neither does, so a crash
+    /// can't leave a "responded" anomaly that nobody acts on.</param>
+    public async Task<AnomalyUpsert> UpsertAsync(DetectionSignal signal, Decision decision, int policyVersion, ResponsePlan? plan, CancellationToken ct)
     {
-        await using var command = db.CreateCommand(
+        var now = time.GetUtcNow();
+        await using var connection = await db.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+
+        await using var command = new NpgsqlCommand(
             """
             INSERT INTO anomalies (id, org_id, user_id, session_id, detector, severity, dedupe_key, evidence, event_ids, detected_at,
                                    decision, decision_reason, policy_version)
@@ -33,7 +42,7 @@ public sealed class AnomalyStore(NpgsqlDataSource db, TimeProvider time)
                     ELSE array_append(anomalies.event_ids, $9)
                 END
             RETURNING id, (xmax = 0) AS created
-            """);
+            """, connection, transaction);
         command.Parameters.AddWithValue(Guid.CreateVersion7());
         command.Parameters.AddWithValue(signal.OrgId);
         command.Parameters.AddWithValue(signal.UserId);
@@ -43,13 +52,26 @@ public sealed class AnomalyStore(NpgsqlDataSource db, TimeProvider time)
         command.Parameters.AddWithValue(signal.DedupeKey);
         command.Parameters.AddWithValue(signal.Evidence.ToJsonString());
         command.Parameters.AddWithValue(signal.EventId);
-        command.Parameters.AddWithValue(time.GetUtcNow());
+        command.Parameters.AddWithValue(now);
         command.Parameters.AddWithValue(decision.Outcome.ToString().ToLowerInvariant());
         command.Parameters.AddWithValue(decision.Reason);
         command.Parameters.AddWithValue(policyVersion);
 
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        await reader.ReadAsync(ct);
-        return new AnomalyUpsert(reader.GetGuid(0), reader.GetBoolean(1));
+        Guid id;
+        bool created;
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            await reader.ReadAsync(ct);
+            (id, created) = (reader.GetGuid(0), reader.GetBoolean(1));
+        }
+
+        Guid? jobId = null;
+        if (created && plan is not null)
+        {
+            jobId = await ResponseJobStore.CreateAsync(connection, transaction, id, signal, plan, now, ct);
+        }
+
+        await transaction.CommitAsync(ct);
+        return new AnomalyUpsert(id, created, jobId);
     }
 }

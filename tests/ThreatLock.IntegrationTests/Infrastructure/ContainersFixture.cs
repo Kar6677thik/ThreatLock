@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using Npgsql;
 using Testcontainers.PostgreSql;
 using Testcontainers.Redis;
 using ThreatLock.Infrastructure.Persistence;
@@ -47,12 +48,23 @@ public sealed class ContainersFixture : IAsyncLifetime
 
         // Migrate once, up front. The app itself runs with MigrateOnStartup=false in tests, so
         // parallel test factories never race to migrate the same database.
-        var options = new DbContextOptionsBuilder<ThreatLockDbContext>();
-        DbContextConfiguration.Configure(options, Postgres.GetConnectionString());
-        await using (var db = new ThreatLockDbContext(options.Options, new NoTenantContext()))
+        await MigrateAsync(Postgres.GetConnectionString());
+
+        // A second, migrated copy that is never used directly: CREATE DATABASE ... TEMPLATE
+        // clones it in milliseconds for tests that need a database to themselves.
+        await using (var admin = new NpgsqlConnection(Postgres.GetConnectionString()))
         {
-            await db.Database.MigrateAsync();
+            await admin.OpenAsync();
+            await using var create = new NpgsqlCommand($"CREATE DATABASE {TemplateDatabase}", admin);
+            await create.ExecuteNonQueryAsync();
         }
+
+        // Pooling off: a template must have no open connections when it's cloned.
+        await MigrateAsync(new NpgsqlConnectionStringBuilder(Postgres.GetConnectionString())
+        {
+            Database = TemplateDatabase,
+            Pooling = false,
+        }.ConnectionString);
 
         await File.WriteAllTextAsync(TorListPath, $"# fixture\n{TestGeoIpLookup.TorExitIp}\nnot-an-ip\n");
 
@@ -85,6 +97,43 @@ public sealed class ContainersFixture : IAsyncLifetime
         return host;
     }
 
+    private const string TemplateDatabase = "threatlock_template";
+
+    // Two clones of one template at the same moment can fail ("source database is being accessed
+    // by other users"), so tests take turns. Each clone takes milliseconds.
+    private readonly SemaphoreSlim cloning = new(1, 1);
+
+    private static async Task MigrateAsync(string connectionString)
+    {
+        var options = new DbContextOptionsBuilder<ThreatLockDbContext>();
+        DbContextConfiguration.Configure(options, connectionString);
+        await using var db = new ThreatLockDbContext(options.Options, new NoTenantContext());
+        await db.Database.MigrateAsync();
+    }
+
+    /// <summary>
+    /// A fresh, fully migrated database of the test's own, for tests where the shared Worker
+    /// must not interfere (e.g. claiming response jobs). Returns its connection string.
+    /// </summary>
+    public async Task<string> CreateDatabaseAsync()
+    {
+        var name = $"tl_{Guid.NewGuid():N}";
+        await cloning.WaitAsync();
+        try
+        {
+            await using var admin = new NpgsqlConnection(Postgres.GetConnectionString());
+            await admin.OpenAsync();
+            await using var create = new NpgsqlCommand($"CREATE DATABASE {name} TEMPLATE {TemplateDatabase}", admin);
+            await create.ExecuteNonQueryAsync();
+        }
+        finally
+        {
+            cloning.Release();
+        }
+
+        return new NpgsqlConnectionStringBuilder(Postgres.GetConnectionString()) { Database = name }.ConnectionString;
+    }
+
     public async ValueTask DisposeAsync()
     {
         await Worker.StopAsync();
@@ -93,5 +142,6 @@ public sealed class ContainersFixture : IAsyncLifetime
         await Postgres.DisposeAsync();
         await Redis.DisposeAsync();
         File.Delete(TorListPath);
+        cloning.Dispose();
     }
 }
