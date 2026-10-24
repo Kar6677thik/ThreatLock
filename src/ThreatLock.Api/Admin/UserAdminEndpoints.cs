@@ -1,5 +1,8 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
+using ThreatLock.Api.Events;
+using ThreatLock.Core.Events;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using ThreatLock.Api.Auth;
@@ -136,11 +139,18 @@ public static class UserAdminEndpoints
     /// this only rotated the security stamp and changed nothing for issued tokens (Break B1).
     /// </summary>
     private static async Task<Results<Ok<RevokeSessionsResponse>, NotFound>> RevokeSessions(
-        Guid id, ThreatLockDbContext db, SessionStore store, CurrentUser me, CancellationToken ct)
+        Guid id, ThreatLockDbContext db, SessionStore store, ActivityRecorder activity, CurrentUser me, CancellationToken ct)
     {
         if (!await db.Users.AnyAsync(u => u.Id == id && u.OrgId == me.RequiredOrgId, ct)) return TypedResults.NotFound();
 
         var revoked = await store.RevokeAllForUserAsync(id, RevocationReasons.AdminManual, ct);
+        foreach (var sid in revoked)
+        {
+            // About the *target* user and session; "by" records which admin did it.
+            await activity.RecordAsync(EventTypes.SessionRevoked, me.RequiredOrgId, id, sid,
+                new JsonObject { ["reason"] = RevocationReasons.AdminManual, ["by"] = me.UserId.ToString() }, ct);
+        }
+
         return TypedResults.Ok(new RevokeSessionsResponse(id, revoked.Count));
     }
 

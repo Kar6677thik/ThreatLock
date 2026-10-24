@@ -85,3 +85,56 @@ public sealed class RefreshToken
     public DateTimeOffset? UsedAt { get; set; }
     public Guid? ReplacedById { get; set; }
 }
+
+/// <summary>
+/// Stored form of <see cref="ThreatLock.Core.Events.ActivityEvent"/> (SPEC §7). The table doubles
+/// as the outbox for the Redis stream: <see cref="PublishedAt"/> stays null until the event is on
+/// the stream, and the Worker's sweeper republishes anything left null (ADR-0003).
+/// </summary>
+public sealed class ActivityEventRecord
+{
+    public Guid Id { get; init; }
+    public Guid OrgId { get; init; }
+    public Guid? UserId { get; init; }
+    public Guid? SessionId { get; init; }
+    public required string Type { get; init; }
+    public DateTimeOffset OccurredAt { get; init; }
+    public System.Net.IPAddress? Ip { get; init; }
+    public string? Geo { get; init; }          // jsonb
+    public string? DeviceId { get; init; }
+    public string? UserAgent { get; init; }
+    public string? RequestId { get; init; }
+    public string? Metadata { get; init; }     // jsonb
+    public DateTimeOffset? PublishedAt { get; set; }
+}
+
+/// <summary>
+/// A persisted, de-duplicated detection (SPEC §8.3). <c>UNIQUE (org_id, dedupe_key)</c> turns
+/// "the same thing detected again" into an update of <see cref="EventIds"/> instead of a new row.
+/// Decision columns are filled by the policy evaluator from M5.
+/// </summary>
+public sealed class Anomaly
+{
+    public Guid Id { get; init; } = Guid.CreateVersion7();
+    public Guid OrgId { get; init; }
+    public Guid UserId { get; init; }
+    public Guid? SessionId { get; init; }
+    public required string Detector { get; init; }
+    public required string Severity { get; init; }
+    public required string DedupeKey { get; init; }
+    public required string Evidence { get; init; }   // jsonb
+    public List<Guid> EventIds { get; init; } = [];
+    public DateTimeOffset DetectedAt { get; init; }
+    public int? PolicyVersion { get; set; }
+    public string? Decision { get; set; }
+    public string? DecisionReason { get; set; }
+}
+
+/// <summary>The last Tor exit list fetched, so a restart without internet still has one (SPEC §8.2 D1).</summary>
+public sealed class TorExitSnapshot
+{
+    public int Id { get; init; }
+    public DateTimeOffset FetchedAt { get; init; }
+    public required string Source { get; init; }
+    public System.Net.IPAddress[] Ips { get; init; } = [];
+}

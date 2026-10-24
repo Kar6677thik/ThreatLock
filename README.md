@@ -8,7 +8,7 @@ ThreatLock is a learning-scale rebuild of Slack's **Anomaly Event Response** (20
 2. **decides** what to do using each organisation's own policy, exclusions and per-user baselines, and
 3. **responds** automatically by revoking every session of the affected user, writing a tamper-evident audit entry, and notifying admins exactly once.
 
-> **Status:** M3, real sessions. Every token is tied to a server-side session checked on each request, so logout and admin revocation stop a stolen token on its very next request ([B1 report](docs/experiments/B1-stateless-jwt.md)). Detection starts in M4. See the [roadmap](docs/spec/SPEC.md#21-milestones).
+> **Status:** M4, detection. Every request becomes an activity event that flows through a Redis stream to the Worker, where two detectors (Tor exit nodes, impossible travel) raise de-duplicated anomalies. Decisions and automatic responses come in M5–M6. Revocation is already instant ([B1 report](docs/experiments/B1-stateless-jwt.md)). See the [roadmap](docs/spec/SPEC.md#21-milestones).
 
 ## Run it locally
 
@@ -35,6 +35,11 @@ Prerequisites, tests, configuration and troubleshooting: [docs/development.md](d
 ## Stack
 
 C# / ASP.NET Core (.NET 10) with ASP.NET Core Identity · React + Vite + TypeScript · PostgreSQL · Redis (Streams + cache) · xUnit + Testcontainers · Docker Compose for local dev · k3s on a home server, deployed by GitHub Actions over Tailscale.
+
+## Data sources
+
+- IP Geolocation by [DB-IP](https://db-ip.com) (DB-IP Lite, CC BY 4.0), downloaded by `scripts/download-geoip.sh`.
+- Tor exit list from the [Tor Project](https://check.torproject.org/torbulkexitlist).
 
 ## Inspiration
 

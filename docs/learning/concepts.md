@@ -246,6 +246,17 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **When:** M2.
 - **Watch out:** the `DbContext` is scoped and not thread-safe. Never store one in a singleton or share one between parallel tasks.
 
+### 6.5 Testing asynchronous systems [FG 23]
+
+- **What:** when work happens in another process (the Worker), a test can't assert right after the request: the result doesn't exist *yet*. Three habits make such tests reliable:
+  1. **Poll, don't sleep.** Check the condition every 100 ms up to a timeout (`Eventually`). Fast when things are fast, and a clear failure when they never happen. A fixed `Sleep(2000)` is both slow and flaky.
+  2. **Prove absence with a marker.** "No anomaly appeared" might just mean "not processed yet". So trigger a *different*, known detection afterwards; once it shows up, everything before it in the stream has been processed too.
+  3. **Isolate timing-sensitive tests.** Tests that tweak timeouts or inject poison messages run their own Worker on their own stream (or Redis database), so they can't disturb anyone else.
+- **Why:** M4's end-to-end tests run the real API and the real Worker against real PostgreSQL and Redis.
+- **When:** M4 onwards.
+- **Watch out:** "it hasn't happened *yet*" assertions. Asserting an intermediate state (e.g. "not published yet") races the background process; a faster machine breaks it. Assert the final outcome and how you know who caused it. M4's CI run taught this one.
+- **Watch out:** ordering guarantees. The marker trick works because one consumer reads the stream in order; with several consumers it would need a per-consumer marker.
+
 ---
 
 ## Part 7. Shipping

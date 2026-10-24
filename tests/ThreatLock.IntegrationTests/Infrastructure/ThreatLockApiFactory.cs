@@ -39,6 +39,8 @@ public sealed class ThreatLockApiFactory(string postgres, string redis, IReadOnl
         builder.UseSetting("Auth:SigningKey", SigningKey);
         builder.UseSetting("Demo:AllowSignup", "true");
         builder.UseSetting("Database:MigrateOnStartup", "false");
+        builder.UseSetting("Simulation:Enabled", "true");
+        builder.UseSetting("Simulation:Key", ContainersFixture.SimulatorKey);
 
         foreach (var (key, value) in settings ?? new Dictionary<string, string?>())
         {
@@ -48,6 +50,7 @@ public sealed class ThreatLockApiFactory(string postgres, string redis, IReadOnl
         builder.ConfigureServices(services =>
         {
             if (Clock is not null) services.AddSingleton(Clock);
+            services.AddSingleton<ThreatLock.Core.Geo.IGeoIpLookup, TestGeoIpLookup>();
             if (RemoteIp is not null) services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(RemoteIp));
         });
     }
@@ -71,6 +74,15 @@ public sealed class ThreatLockApiFactory(string postgres, string redis, IReadOnl
     {
         var client = CreateClient();
         client.DefaultRequestHeaders.Authorization = new("Bearer", accessToken);
+        return client;
+    }
+
+    /// <summary>A client that appears to come from <paramref name="ip"/> via the keyed simulation header (ADR-0007).</summary>
+    public HttpClient CreateSimulatedClient(string ip, string? accessToken = null)
+    {
+        var client = accessToken is null ? CreateClient() : CreateClient(accessToken);
+        client.DefaultRequestHeaders.Add("X-Simulator-Key", ContainersFixture.SimulatorKey);
+        client.DefaultRequestHeaders.Add("X-Simulated-Client-Ip", ip);
         return client;
     }
 }
