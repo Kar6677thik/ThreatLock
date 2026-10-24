@@ -139,6 +139,20 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **When:** M3.
 - **Watch out:** an ORM that loads an entity, changes it in memory and saves it does *not* do this; it overwrites blindly unless you add a concurrency token.
 
+### 2.8 Effect markers: making a multi-step job idempotent [FG 18]
+
+- **What:** a job with several side effects (revoke, notify, ...) can crash between any two. To make a rerun safe, each step either is naturally idempotent ("set this key to `r`") or records *that it happened* **in the same transaction as its effect**: `UPDATE response_jobs SET notified_at = now()` commits together with the notification rows. A rerun checks the marker and skips the step. Because effect and marker commit or roll back together, "done" and "recorded as done" can never disagree.
+- **Why:** Break B4. The naive responder, retried after crashes, notified admins 532 times instead of 300.
+- **When:** M6.
+- **Watch out:** derive repeated work from durable state, not from what *this* run saw. The naive responder wrote Redis markers only for the sessions its UPDATE returned; on a retry that's an empty list, so a crash in between left revoked sessions cached as "active". Also: read the marker `FOR UPDATE`, or two workers running the same job (lease expired) can both see "not done".
+
+### 2.9 LISTEN/NOTIFY, polling and graceful shutdown
+
+- **What:** PostgreSQL's built-in pub/sub. A session runs `LISTEN response_jobs`; any transaction can `pg_notify('response_jobs', ...)`, and listeners are told **when that transaction commits** (never for a rollback). Notifications aren't stored: a listener that is disconnected misses them.
+- **Why:** time to revoke. Polling every 250 ms alone adds up to 250 ms; NOTIFY wakes the Worker as soon as the anomaly and its job commit. Polling stays for the cases nobody announces: retries coming due and expired leases.
+- **When:** M6.
+- **Watch out:** treat NOTIFY as a hint, never as the queue (the table is the queue). On shutdown, hand a running job back (status `pending`) instead of leaving it to its lease, or every deploy delays in-flight responses by up to 60 s. A crash can't do this, which is exactly why the lease exists too.
+
 ---
 
 ## Part 3. Detection
@@ -220,8 +234,8 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 ### 5.2 Advisory locks
 
 - **What:** PostgreSQL locks on an arbitrary number you choose, not on a row. `pg_advisory_xact_lock(n)` is released automatically at commit.
-- **Why:** two writers appending to the same org's chain at once would both read the same head and fork the chain. The lock makes them take turns.
-- **When:** M7.
+- **Why:** two writers appending to the same org's chain at once would both read the same head and fork the chain. The lock makes them take turns. In M6, two response jobs about the same user both looking for "an unread notification to group into" would both find none and both insert; a lock keyed on the user (`hashtextextended('notify:' || user_id, 0)`) serialises them.
+- **When:** M6 (notification grouping), M7 (audit chain).
 
 ---
 

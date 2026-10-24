@@ -110,6 +110,8 @@ It signs in from a simulated Indian IP, uses the session from a UK IP, then sign
 
 In the SPA (signed in as an owner or security admin): **Anomalies** lists them with filters and links to each anomaly's evidence and decision; **Policy** edits the org's policy (try switching Tor to *observe*, then rerun the smoke test: the new anomaly says `observed`, policy v1); **Users** adds people and signs them out everywhere. The screens you see depend on your roles.
 
+From M6 the Worker also **acts**. A responded anomaly gets a response job: the user's sessions are revoked (their next request gets `401`), and the admins get a notification. Watch the **Notifications** badge, the anomaly page's **Response** timeline, and, for security admins, **Jobs** (failed and dead jobs, with Retry). To see a lock, set the policy's response action to `revoke_and_lock`. **Wait 10 s** (the Worker's policy cache), then sign in through Tor again. The user's next login gets `403` "locked after suspicious activity" until someone presses **Unlock** on the Users screen.
+
 Simulated IPs work only because Development enables `Simulation` with a dev key (ADR-0007). To poke around yourself: `GET /api/admin/anomalies` as an admin; the stream with `docker compose -f deploy/compose/docker-compose.yml exec redis redis-cli XINFO GROUPS tl:events`; events with `SELECT type, host(ip), geo->>'city' FROM activity_events ORDER BY occurred_at DESC LIMIT 10;`.
 
 The refresh cookie is `Secure`, so curl (unlike a browser) won't send it back over plain `http://127.0.0.1`. To try refresh from the command line, copy the `tl_refresh` value from the login response's `Set-Cookie` header and send it yourself:
@@ -120,7 +122,7 @@ curl -s -X POST -H "X-Requested-With: threatlock" -H "Cookie: tl_refresh=<value>
 curl -s -H "Authorization: Bearer $T" $B/api/me/sessions     # where you're signed in
 ```
 
-The Break B1 experiment is scripted: `scripts/experiments/b1-stateless-jwt.sh` (see [the report](experiments/B1-stateless-jwt.md)); `scripts/experiments/session-check-latency.py` measures what the session check costs per request.
+The Break B1 experiment is scripted: `scripts/experiments/b1-stateless-jwt.sh` (see [the report](experiments/B1-stateless-jwt.md)); `scripts/experiments/session-check-latency.py` measures what the session check costs per request. Break B4 is `scripts/experiments/b4-responder-crashes.sh`. It needs only Docker, not the running app: it runs the 100-crash test at the tag `break/b4-naive-responder` and at your commit, and prints both results ([report](experiments/B4-idempotent-responder.md)).
 
 ## Database migrations
 
@@ -176,6 +178,8 @@ Settings come from `appsettings.json`, then `appsettings.{Environment}.json`, th
 | `Events:MaxDeliveries`, `Events:ClaimIdle`, `Events:ClaimInterval` | `5`, `00:01:00`, `00:00:30` | When a pending message is reclaimed, and when it's dead-lettered |
 | `Events:SweepInterval`, `Events:SweepMinAge`, `Events:RetentionDays` | `00:00:05`, `00:00:05`, `30` | Outbox sweeper and the activity-event purge |
 | `Policy:CacheSeconds` | `10` | How long the Worker reuses an org's policy; a policy edit applies within this many seconds |
+| `Responses:Enabled` | `true` | Whether this Worker runs response jobs. Off for extra Workers in tests |
+| `Responses:PollInterval`, `Responses:Lease` | `00:00:00.250`, `00:01:00` | How often an idle Worker checks for due jobs (a NOTIFY usually wakes it first), and how long a claimed job is reserved before another Worker may take it |
 | `Tor:ListUrl`, `Tor:ListPath`, `Tor:RefreshInterval` | Tor Project URL, none, `01:00:00` | Set `ListPath` to a local file to work offline |
 | `Network:KnownProxies`, `Network:KnownNetworks` | empty | Proxies allowed to set `X-Forwarded-For` (IPs, CIDRs). Empty = trust nobody, use the TCP peer address (ADR-0007) |
 | `Auth:Issuer`, `Auth:Audience` | `threatlock`, `threatlock-api` | Checked on every token |
@@ -201,5 +205,8 @@ To change Compose ports or credentials, copy `.env.example` to `.env` in the rep
 | API logs `GeoIP database not found` | `data/geoip/dbip-city-lite.mmdb` is missing | `scripts/download-geoip.sh` (the app works without it; impossible travel just never fires) |
 | Worker logs `Restored N Tor exit addresses from the snapshot` | The Tor list download failed (offline?) and the last saved copy is in use | Fine for development; or set `Tor:ListPath` to a local file |
 | No anomalies appear | The Worker isn't running, or the API and Worker use different `Events:StreamName` | Start the Worker; check `XINFO GROUPS tl:events` shows `lag 0` |
+| A Tor login only revoked, though the policy says `revoke_and_lock` (or any policy edit "didn't apply") | The Worker reused the policy it had read in the last `Policy:CacheSeconds` (10 s). The anomaly page shows which policy version judged it | Wait 10 s after a policy edit. Tests set `Policy:CacheSeconds=0` |
+| Worker logs `Could not claim response jobs` with `relation "response_jobs" does not exist` | The Worker started before the API applied the migrations | Harmless: it keeps retrying and recovers once the API has migrated |
+| A user can't sign in: `403` "locked after suspicious activity" | A `revoke_and_lock` response locked the account | An owner or security admin presses **Unlock** on the Users screen |
 | Experiment script says `Python was not found` | On Windows, `python3` can be a Microsoft Store stub | The scripts detect this and fall back to `python` |
 | Worker fails at startup: `ConnectionStrings:Postgres is required` | Running with environment `Production`, so dev settings weren't loaded | Use `dotnet run` (it reads `launchSettings.json`, which sets `DOTNET_ENVIRONMENT=Development`) |

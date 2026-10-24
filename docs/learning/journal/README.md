@@ -10,7 +10,7 @@ One file per milestone, written **during** the work. It's the story of the build
 | M3 Real sessions | [M3-real-sessions.md](M3-real-sessions.md) |
 | M4 Event pipeline + D1, D2 | [M4-event-pipeline.md](M4-event-pipeline.md) |
 | M5 Decision framework + admin UI | [M5-decision-framework.md](M5-decision-framework.md) |
-| M6 Response orchestrator | *not started* |
+| M6 Response orchestrator | [M6-response-orchestrator.md](M6-response-orchestrator.md) |
 | M7 Audit log | *not started* |
 | M8 Remaining detectors | *not started* |
 | M9 Simulator and evaluation | *not started* |
