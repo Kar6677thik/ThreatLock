@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json.Nodes;
 using ThreatLock.Core.Events;
 using ThreatLock.Core.Geo;
+using ThreatLock.Core.Policy;
 
 namespace ThreatLock.Core.Detection;
 
@@ -27,7 +28,8 @@ public sealed record DetectionSignal(
     Severity Severity,
     string DedupeKey,
     JsonObject Evidence,
-    Guid EventId);
+    Guid EventId,
+    IReadOnlyList<string> Ips);
 
 /// <summary>A detector: looks at one event (plus whatever state it keeps) and returns signals.</summary>
 public interface IDetector
@@ -37,8 +39,15 @@ public interface IDetector
     ValueTask<IReadOnlyList<DetectionSignal>> EvaluateAsync(ActivityEvent evt, DetectionContext context, CancellationToken ct);
 }
 
-/// <summary>Everything a detector may consult. Each piece is an interface so tests and the replay harness can fake it.</summary>
-public sealed record DetectionContext(IDetectorState State, ITorExitList TorExits);
+/// <summary>
+/// Everything a detector may consult. Each piece is an interface (or plain data) so tests and the
+/// replay harness can fake it. <see cref="Policy"/> is the event's org policy, so detectors can
+/// use per-org thresholds.
+/// </summary>
+public sealed record DetectionContext(IDetectorState State, ITorExitList TorExits, SecurityPolicy? Policy = null)
+{
+    public SecurityPolicy EffectivePolicy => Policy ?? SecurityPolicy.Default;
+}
 
 /// <summary>Where the user was last seen, for impossible travel.</summary>
 public sealed record LastLocation(string Ip, GeoInfo Geo, DateTimeOffset At);

@@ -14,6 +14,7 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
     public DbSet<ActivityEventRecord> ActivityEvents => Set<ActivityEventRecord>();
     public DbSet<Anomaly> Anomalies => Set<Anomaly>();
     public DbSet<TorExitSnapshot> TorExitSnapshots => Set<TorExitSnapshot>();
+    public DbSet<OrgPolicy> OrgPolicies => Set<OrgPolicy>();
 
     /// <summary>
     /// Read by the query filter below. EF Core turns a reference to a DbContext member into a
@@ -128,5 +129,13 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
         });
 
         builder.Entity<TorExitSnapshot>(snapshot => snapshot.Property(s => s.Source).HasMaxLength(500));
+
+        builder.Entity<OrgPolicy>(policy =>
+        {
+            // (org, version) is the key: two admins saving "version 4" at once can't both win.
+            policy.HasKey(p => new { p.OrgId, p.Version });
+            policy.Property(p => p.Document).HasColumnType("jsonb");
+            policy.HasOne<Org>().WithMany().HasForeignKey(p => p.OrgId).OnDelete(DeleteBehavior.Cascade);
+        });
     }
 }

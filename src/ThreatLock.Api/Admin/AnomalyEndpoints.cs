@@ -18,7 +18,8 @@ public sealed record AnomalyView(
     IReadOnlyList<Guid> EventIds,
     JsonElement Evidence,
     string? Decision,
-    string? DecisionReason);
+    string? DecisionReason,
+    int? PolicyVersion);
 
 /// <summary>
 /// Read-only view of anomalies for admins (SPEC §13). The admin UI and decisions arrive in M5;
@@ -34,11 +35,12 @@ public static class AnomalyEndpoints
     }
 
     private static async Task<Ok<List<AnomalyView>>> List(
-        ThreatLockDbContext db, CurrentUser me, string? detector, int? limit, CancellationToken ct)
+        ThreatLockDbContext db, CurrentUser me, string? detector, string? decision, int? limit, CancellationToken ct)
     {
         var orgId = me.RequiredOrgId;
         var query = db.Anomalies.Where(a => a.OrgId == orgId);
         if (!string.IsNullOrWhiteSpace(detector)) query = query.Where(a => a.Detector == detector);
+        if (!string.IsNullOrWhiteSpace(decision)) query = query.Where(a => a.Decision == decision);
 
         var rows = await query
             .OrderByDescending(a => a.DetectedAt)
@@ -62,6 +64,6 @@ public static class AnomalyEndpoints
     {
         using var evidence = JsonDocument.Parse(a.Evidence);
         return new AnomalyView(a.Id, a.Detector, a.Severity, a.UserId, userName, a.SessionId, a.DetectedAt,
-            a.EventIds.Count, a.EventIds, evidence.RootElement.Clone(), a.Decision, a.DecisionReason);
+            a.EventIds.Count, a.EventIds, evidence.RootElement.Clone(), a.Decision, a.DecisionReason, a.PolicyVersion);
     }
 }

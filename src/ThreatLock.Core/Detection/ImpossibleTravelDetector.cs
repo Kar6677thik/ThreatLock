@@ -2,13 +2,24 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using ThreatLock.Core.Events;
 using ThreatLock.Core.Geo;
+using ThreatLock.Core.Policy;
 
 namespace ThreatLock.Core.Detection;
 
-/// <summary>Tunables for D2. Per-org overrides arrive with the policy model in M5.</summary>
+/// <summary>Tunables for D2. Orgs override them through policy thresholds (SPEC §9.1).</summary>
 public sealed record ImpossibleTravelSettings(double MaxSpeedKmh = 900, double MinDistanceKm = 500, double LookbackHours = 24)
 {
+    public const string MaxSpeedKmhKey = "maxSpeedKmh";
+    public const string MinDistanceKmKey = "minDistanceKm";
+
     public static ImpossibleTravelSettings Default { get; } = new();
+
+    /// <summary>This org's thresholds, falling back to the detector's defaults.</summary>
+    public ImpossibleTravelSettings For(DetectorPolicy policy) => this with
+    {
+        MaxSpeedKmh = policy.Threshold(MaxSpeedKmhKey, MaxSpeedKmh),
+        MinDistanceKm = policy.Threshold(MinDistanceKmKey, MinDistanceKm),
+    };
 }
 
 /// <summary>
@@ -23,7 +34,7 @@ public sealed record ImpossibleTravelSettings(double MaxSpeedKmh = 900, double M
 /// </summary>
 public sealed class ImpossibleTravelDetector(ImpossibleTravelSettings? settings = null) : IDetector
 {
-    private readonly ImpossibleTravelSettings settings = settings ?? ImpossibleTravelSettings.Default;
+    private readonly ImpossibleTravelSettings defaults = settings ?? ImpossibleTravelSettings.Default;
 
     public string Id => DetectorIds.ImpossibleTravel;
 
@@ -32,6 +43,7 @@ public sealed class ImpossibleTravelDetector(ImpossibleTravelSettings? settings 
         if (!EventTypes.IsAuthenticatedActivity(evt) || evt.Geo is not { } here || evt.Ip is null) return [];
 
         var userId = evt.UserId!.Value;
+        var settings = defaults.For(context.EffectivePolicy.For(Id));
         var lookback = TimeSpan.FromHours(settings.LookbackHours);
         var previous = await context.State.GetLastLocationAsync(userId, ct);
 
@@ -67,7 +79,7 @@ public sealed class ImpossibleTravelDetector(ImpossibleTravelSettings? settings 
             ["simulated"] = evt.Simulated,
         };
 
-        return [new DetectionSignal(Id, evt.OrgId, userId, evt.SessionId, severity, dedupeKey, evidence, evt.Id)];
+        return [new DetectionSignal(Id, evt.OrgId, userId, evt.SessionId, severity, dedupeKey, evidence, evt.Id, [previous.Ip, evt.Ip])];
     }
 
     private static JsonObject Point(string ip, GeoInfo geo, DateTimeOffset at) => new()

@@ -469,20 +469,23 @@ For each signal, the Worker:
 
 ### 9.1 Policy model
 
-One policy document per org, stored as a versioned row (`org_policies(org_id, version, document jsonb, updated_by, updated_at)`); edits create a new version and an audit entry. The anomaly records the policy version that judged it, so "why did this happen?" is always answerable.
+One policy document per org, stored as a versioned row (`org_policies(org_id, version, document jsonb, updated_by, updated_at)`, primary key `(org_id, version)`); edits insert a new version (audited from M7). An org that never edited its policy is at **version 0**, the defaults. The anomaly records the policy version that judged it, so "why did this happen?" is always answerable; `GET /api/admin/policy/versions/{n}` shows that exact version.
+
+Saves use **optimistic concurrency**: the editor sends the version it loaded (`expectedVersion`); if anyone saved in between, the API answers `409` instead of silently overwriting their change.
+
+Detector keys are the detector ids (§8.2). Detector-specific numbers live under `thresholds`. Enum values are strings (`"respond"`, `"high"`); numbers are rejected.
 
 ```jsonc
 {
-  "trustedNetworks": ["203.0.113.0/24"],        // e.g. corporate VPN egress
+  "trustedNetworks": ["203.0.113.0/24", "198.51.100.7"],  // CIDRs; a bare address means that one host
   "excludedUserIds": [],                          // e.g. a pentest account
-  "excludedRoles": [],                            // e.g. ["service"]
+  "excludedRoles": [],                            // e.g. ["security_admin"]
   "notifyRoles": ["owner", "admin", "security_admin"],
   "detectors": {
-    "tor":            { "mode": "respond", "minSeverity": "high" },
-    "impossibleTravel": { "mode": "notify", "maxSpeedKmh": 900, "minDistanceKm": 500 },
-    "scraping":       { "mode": "respond", "k": 4, "orgFloor": 60, "minActiveMinutes": 30 },
-    "newDeviceExport": { "mode": "respond", "windowMinutes": 30, "bulkReadThreshold": 50 },
-    "sessionHijack":  { "mode": "respond" }
+    "tor":               { "mode": "respond", "minSeverity": "high" },
+    "impossible_travel": { "mode": "notify", "minSeverity": "low",
+                           "thresholds": { "maxSpeedKmh": 900, "minDistanceKm": 500 } }
+    // D3–D5 (M8) add their own keys and thresholds
   },
   "response": {
     "action": "revoke_sessions",                  // or "revoke_and_lock"
@@ -492,6 +495,10 @@ One policy document per org, stored as a versioned row (`org_policies(org_id, ve
 ```
 
 Modes: `off` (detector does not run for this org), `observe` (record only), `notify` (record + notify admins), `respond` (record + revoke + notify).
+
+Validation (`PolicyValidator`) rejects: unparsable or catch-all (`/0`) networks, unknown roles, unknown detectors and thresholds, thresholds outside their range, an empty `notifyRoles`, unknown response actions. A typo in a security policy is a security bug, so it's refused with field-level errors rather than stored.
+
+The Worker caches each org's policy for `Policy:CacheSeconds` (10 s): an edit applies to anomalies detected a few seconds later, and each anomaly still records the version actually used.
 
 ### 9.2 Evaluation order
 
@@ -504,7 +511,7 @@ First matching rule wins; the reason string is stored on the anomaly.
 5. Severity below detector's `minSeverity` → `observed: below_min_severity`.
 6. Mode `observe` → `observed`. Mode `notify` → `notified`. Mode `respond` → `responded`.
 
-Suppressed anomalies are still stored (and visible in the admin UI with a filter) because "what did we ignore?" is how you tune false positives.
+Suppressed anomalies are still stored (and visible in the admin UI with a filter) because "what did we ignore?" is how you tune false positives. The decision is written **in the same statement** that creates the anomaly, and only then: a later duplicate signal never re-judges it.
 
 ### 9.3 Default policy for a new org
 
@@ -661,7 +668,8 @@ JSON over HTTPS. Errors use RFC 9457 Problem Details (`application/problem+json`
 | `POST /api/admin/users/{id}/unlock` | security_admin, owner | Clear security lock |
 | `PUT /api/admin/users/{id}/roles` | owner | Change roles |
 | `GET /api/admin/anomalies?decision=&detector=`, `GET /api/admin/anomalies/{id}` | admin+ | List and inspect, with timeline |
-| `GET /api/admin/policy`, `PUT /api/admin/policy` | security_admin, owner | Read and edit (new version) |
+| `GET /api/admin/policy`, `PUT /api/admin/policy` | security_admin, owner | Read; edit with `expectedVersion` (new version, `409` if stale) |
+| `GET /api/admin/policy/versions`, `GET /api/admin/policy/versions/{n}` | security_admin, owner | Version history; any past version |
 | `GET /api/admin/audit?afterSeq=`, `POST /api/admin/audit/verify` | security_admin, owner | Browse and verify chain |
 | `GET /api/admin/notifications`, `POST /api/admin/notifications/{id}/read` | admin+ | Inbox |
 | `GET /api/admin/response-jobs?status=`, `POST /api/admin/response-jobs/{id}/retry` | security_admin, owner | Failed and dead jobs |

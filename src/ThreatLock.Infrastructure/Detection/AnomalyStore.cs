@@ -1,5 +1,6 @@
 using Npgsql;
 using ThreatLock.Core.Detection;
+using ThreatLock.Core.Policy;
 
 namespace ThreatLock.Infrastructure.Detection;
 
@@ -17,12 +18,15 @@ public sealed class AnomalyStore(NpgsqlDataSource db, TimeProvider time)
     /// or updating transaction yet, so it tells us whether <c>ON CONFLICT</c> inserted or updated.
     /// </para>
     /// </summary>
-    public async Task<AnomalyUpsert> UpsertAsync(DetectionSignal signal, CancellationToken ct)
+    /// <param name="decision">Stored only when the row is created: an anomaly is judged once, by
+    /// the policy version in force when it was first detected (SPEC §9.1).</param>
+    public async Task<AnomalyUpsert> UpsertAsync(DetectionSignal signal, Decision decision, int policyVersion, CancellationToken ct)
     {
         await using var command = db.CreateCommand(
             """
-            INSERT INTO anomalies (id, org_id, user_id, session_id, detector, severity, dedupe_key, evidence, event_ids, detected_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, ARRAY[$9]::uuid[], $10)
+            INSERT INTO anomalies (id, org_id, user_id, session_id, detector, severity, dedupe_key, evidence, event_ids, detected_at,
+                                   decision, decision_reason, policy_version)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, ARRAY[$9]::uuid[], $10, $11, $12, $13)
             ON CONFLICT (org_id, dedupe_key) DO UPDATE
                 SET event_ids = CASE
                     WHEN $9 = ANY (anomalies.event_ids) THEN anomalies.event_ids
@@ -40,6 +44,9 @@ public sealed class AnomalyStore(NpgsqlDataSource db, TimeProvider time)
         command.Parameters.AddWithValue(signal.Evidence.ToJsonString());
         command.Parameters.AddWithValue(signal.EventId);
         command.Parameters.AddWithValue(time.GetUtcNow());
+        command.Parameters.AddWithValue(decision.Outcome.ToString().ToLowerInvariant());
+        command.Parameters.AddWithValue(decision.Reason);
+        command.Parameters.AddWithValue(policyVersion);
 
         await using var reader = await command.ExecuteReaderAsync(ct);
         await reader.ReadAsync(ct);
