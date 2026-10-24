@@ -1,14 +1,17 @@
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using System.Text.Json.Nodes;
+using ThreatLock.Core.Audit;
 using ThreatLock.Core.Detection;
 using ThreatLock.Core.Response;
 using ThreatLock.Core.Sessions;
+using ThreatLock.Infrastructure.Audit;
 using ThreatLock.Infrastructure.Sessions;
 
 namespace ThreatLock.Infrastructure.Response;
 
 /// <summary>The points between steps where a crash can be injected (tests and Break B4).</summary>
-public enum ResponseStep { Revoked, CacheMarked, Notified }
+public enum ResponseStep { Revoked, CacheMarked, Audited, Notified }
 
 /// <summary>
 /// A test seam for "the Worker died right here". Production uses <see cref="NoFaults"/>; the
@@ -33,7 +36,8 @@ public sealed class NoFaults : IResponseFaultInjector
 /// commits with the revocation, so they can't disagree.</item>
 /// <item>Mark the revoked sessions in Redis: rerun every time, from the sessions this anomaly
 /// revoked (not from what step 1 happened to return on this run). Writing "r" twice is harmless.</item>
-/// <item>Audit entry: arrives in M7, keyed <c>response:{anomalyId}</c>.</item>
+/// <item>Audit entry, keyed <c>response:{anomalyId}</c>: the key is unique, so a retry finds
+/// the entry already there and writes nothing.</item>
 /// <item>Notify: skipped if <c>notified_at</c> is set; recipients are distinct people, not role
 /// memberships; <c>UNIQUE (anomaly_id, recipient_user_id)</c> is the backstop.</item>
 /// <item>Finish: conditional updates only.</item>
@@ -44,6 +48,7 @@ public sealed partial class ResponseExecutor(
     NpgsqlDataSource db,
     SessionStore sessions,
     ResponseJobStore jobs,
+    AuditLog audit,
     IResponseFaultInjector faults,
     TimeProvider time,
     ILogger<ResponseExecutor> logger)
@@ -58,11 +63,13 @@ public sealed partial class ResponseExecutor(
             await RevokeAsync(job, ct);
             await faults.AfterAsync(ResponseStep.Revoked, job);
 
-            await sessions.MarkRevokedAsync(await RevokedByAnomalyAsync(job, ct));
+            var revoked = await RevokedByAnomalyAsync(job, ct);
+            await sessions.MarkRevokedAsync(revoked);
             await faults.AfterAsync(ResponseStep.CacheMarked, job);
-        }
 
-        // Step 4, the audit entry, arrives with the audit log in M7.
+            await AuditAsync(job, revoked, ct);
+            await faults.AfterAsync(ResponseStep.Audited, job);
+        }
 
         await NotifyAsync(job, ct);
         await faults.AfterAsync(ResponseStep.Notified, job);
@@ -118,13 +125,29 @@ public sealed partial class ResponseExecutor(
 
     private async Task<List<(Guid, DateTimeOffset)>> RevokedByAnomalyAsync(ClaimedJob job, CancellationToken ct)
     {
-        await using var command = db.CreateCommand("SELECT id, absolute_expires_at FROM sessions WHERE revoked_by_anomaly_id = $1");
+        await using var command = db.CreateCommand("SELECT id, absolute_expires_at FROM sessions WHERE revoked_by_anomaly_id = $1 ORDER BY id");
         command.Parameters.AddWithValue(job.AnomalyId);
         var revoked = new List<(Guid, DateTimeOffset)>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct)) revoked.Add((reader.GetGuid(0), reader.GetFieldValue<DateTimeOffset>(1)));
         return revoked;
     }
+
+    /// <summary>
+    /// Step 4: what the response did, as evidence. Rerunning it is a no-op because of the
+    /// idempotency key; the session list comes from durable state, so it's the same on a retry.
+    /// </summary>
+    private async Task AuditAsync(ClaimedJob job, List<(Guid Id, DateTimeOffset)> revoked, CancellationToken ct) =>
+        await audit.AppendAsync(new AuditRecord(
+            job.OrgId, ActorTypes.System, null, AuditActions.ResponseExecuted, "user", job.UserId.ToString(), job.AnomalyId,
+            new JsonObject
+            {
+                ["action"] = job.Action,
+                ["detector"] = job.Detector,
+                ["locked"] = job.Action == JobActions.RevokeAndLock,
+                ["revokedSessions"] = new JsonArray([.. revoked.Select(s => JsonValue.Create(s.Id.ToString()))]),
+            },
+            IdempotencyKey: $"response:{job.AnomalyId}"), ct);
 
     /// <summary>
     /// Step 5: one notification per distinct admin, grouped per (recipient, subject user) within

@@ -34,6 +34,7 @@ public class ResponseIdempotencyTests(ContainersFixture containers)
     [InlineData(null)]
     [InlineData(ResponseStep.Revoked)]
     [InlineData(ResponseStep.CacheMarked)]
+    [InlineData(ResponseStep.Audited)]
     [InlineData(ResponseStep.Notified)]
     public async Task A_crash_after_any_step_ends_in_the_same_state_as_a_clean_run(ResponseStep? crashAfter)
     {
@@ -53,6 +54,8 @@ public class ResponseIdempotencyTests(ContainersFixture containers)
         Assert.Equal(2L, await h.ScalarAsync<long>("SELECT count(*) FROM notifications WHERE anomaly_id = $1", anomaly.Id));
         Assert.Equal(JobStatuses.Succeeded, await h.ScalarAsync<string>("SELECT status FROM response_jobs WHERE id = $1", anomaly.JobId!.Value));
         Assert.NotNull(await h.ScalarAsync<DateTimeOffset?>("SELECT responded_at FROM anomalies WHERE id = $1", anomaly.Id));
+        Assert.Equal(1L, await h.ScalarAsync<long>("SELECT count(*) FROM audit_log WHERE idempotency_key = $1", $"response:{anomaly.Id}"));
+        Assert.True((await h.Audit.VerifyAsync(org, null, Ct)).Ok);
     }
 
     [Fact]

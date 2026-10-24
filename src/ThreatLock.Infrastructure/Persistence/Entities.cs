@@ -226,3 +226,25 @@ public sealed class Notification
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? ReadAt { get; set; }
 }
+
+/// <summary>
+/// One link of an org's tamper-evident audit chain (SPEC §11, ADR-0005). Append-only: a trigger
+/// refuses UPDATE, DELETE and TRUNCATE. <see cref="EntryHash"/> = SHA-256(<see cref="PrevHash"/>
+/// || canonical(entry)), see <see cref="ThreatLock.Core.Audit.AuditChain"/>.
+/// </summary>
+public sealed class AuditLogEntry
+{
+    public Guid OrgId { get; init; }
+    public long Seq { get; init; }
+    public DateTimeOffset OccurredAt { get; init; }
+    public required string ActorType { get; init; }
+    public Guid? ActorId { get; init; }
+    public required string Action { get; init; }
+    public string? TargetType { get; init; }
+    public string? TargetId { get; init; }
+    public Guid? AnomalyId { get; init; }
+    public required string Details { get; init; }   // jsonb
+    public string? IdempotencyKey { get; init; }
+    public required byte[] PrevHash { get; init; }
+    public required byte[] EntryHash { get; init; }
+}

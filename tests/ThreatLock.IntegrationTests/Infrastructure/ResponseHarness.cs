@@ -8,6 +8,7 @@ using StackExchange.Redis;
 using ThreatLock.Core.Detection;
 using ThreatLock.Core.Policy;
 using ThreatLock.Core.Response;
+using ThreatLock.Infrastructure.Audit;
 using ThreatLock.Infrastructure.Detection;
 using ThreatLock.Infrastructure.Persistence;
 using ThreatLock.Infrastructure.Response;
@@ -31,8 +32,9 @@ public sealed class ResponseHarness : IAsyncDisposable
         Db = NpgsqlDataSource.Create(connectionString);
         Sessions = new SessionStore(Db, redis, Clock, NullLogger<SessionStore>.Instance);
         Jobs = new ResponseJobStore(Db, Options.Create(new ResponseOptions()), Clock);
-        Anomalies = new AnomalyStore(Db, Clock);
-        Executor = new ResponseExecutor(Db, Sessions, Jobs, Faults, Clock, NullLogger<ResponseExecutor>.Instance);
+        Audit = new AuditLog(Db, Clock);
+        Anomalies = new AnomalyStore(Db, Audit, Clock);
+        Executor = new ResponseExecutor(Db, Sessions, Jobs, Audit, Faults, Clock, NullLogger<ResponseExecutor>.Instance);
     }
 
     public string ConnectionString { get; }
@@ -43,6 +45,7 @@ public sealed class ResponseHarness : IAsyncDisposable
     public SessionStore Sessions { get; }
     public ResponseJobStore Jobs { get; }
     public AnomalyStore Anomalies { get; }
+    public AuditLog Audit { get; }
     public ResponseExecutor Executor { get; }
 
     public static async Task<ResponseHarness> CreateAsync(ContainersFixture containers) =>

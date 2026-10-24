@@ -17,6 +17,7 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
     public DbSet<OrgPolicy> OrgPolicies => Set<OrgPolicy>();
     public DbSet<ResponseJob> ResponseJobs => Set<ResponseJob>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<AuditLogEntry> AuditLog => Set<AuditLogEntry>();
 
     /// <summary>
     /// Read by the query filter below. EF Core turns a reference to a DbContext member into a
@@ -153,6 +154,27 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
             job.HasIndex(j => j.AnomalyId).IsUnique();
             // The claim query: "pending and due", plus expired leases on "running".
             job.HasIndex(j => new { j.Status, j.NextAttemptAt });
+        });
+
+        builder.Entity<AuditLogEntry>(entry =>
+        {
+            entry.ToTable("audit_log");
+            // One chain per org: (org, seq) is the identity, and its uniqueness is the backstop
+            // behind the advisory lock if two appends ever raced.
+            entry.HasKey(e => new { e.OrgId, e.Seq });
+            entry.Property(e => e.ActorType).HasMaxLength(10);
+            entry.Property(e => e.Action).HasMaxLength(60);
+            entry.Property(e => e.TargetType).HasMaxLength(40);
+            entry.Property(e => e.TargetId).HasMaxLength(100);
+            entry.Property(e => e.Details).HasColumnType("jsonb");
+            entry.Property(e => e.IdempotencyKey).HasMaxLength(200);
+            entry.Property(e => e.PrevHash).HasMaxLength(32);
+            entry.Property(e => e.EntryHash).HasMaxLength(32);
+            // Retried work (a response job) writes its entry once. NULLs are distinct, so the
+            // many entries without a key don't collide.
+            entry.HasIndex(e => e.IdempotencyKey).IsUnique();
+            // Restrict: deleting an org must not silently delete its evidence.
+            entry.HasOne<Org>().WithMany().HasForeignKey(e => e.OrgId).OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<Notification>(notification =>
