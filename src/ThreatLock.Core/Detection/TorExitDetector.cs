@@ -33,6 +33,6 @@ public sealed class TorExitDetector : IDetector
             ["simulated"] = evt.Simulated,
         };
 
-        return [new DetectionSignal(Id, evt.OrgId, evt.UserId!.Value, evt.SessionId, Severity.High, dedupeKey, evidence, evt.Id)];
+        return [new DetectionSignal(Id, evt.OrgId, evt.UserId!.Value, evt.SessionId, Severity.High, dedupeKey, evidence, evt.Id, [evt.Ip!])];
     }
 }
