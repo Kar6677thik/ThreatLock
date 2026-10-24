@@ -530,6 +530,7 @@ stateDiagram-v2
     running --> succeeded: all steps done
     running --> pending: step failed, attempts < 5<br/>next_attempt_at = backoff + jitter
     running --> pending: lease expired (worker crashed)
+    running --> pending: worker stopping (handed back, attempt not counted)
     running --> dead: attempts = 5
     dead --> pending: admin clicks Retry
     succeeded --> [*]
@@ -537,20 +538,23 @@ stateDiagram-v2
 
 - Claim: `UPDATE response_jobs SET status='running', locked_until=now()+60s, attempts=attempts+1 WHERE id = (SELECT id FROM response_jobs WHERE (status='pending' AND next_attempt_at<=now()) OR (status='running' AND locked_until<now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`.
 - Backoff: `min(2^attempts s, 60 s)` plus up to 20 % random jitter.
-- Poll interval: 250 ms, plus a Postgres `LISTEN response_jobs` wake-up so a new job starts immediately (this matters for time to revoke).
+- Poll interval: 250 ms, plus a Postgres `LISTEN response_jobs` wake-up so a new job starts immediately (this matters for time to revoke). The `pg_notify` is sent in the anomaly's transaction, so it's delivered only on commit.
+- Jobs exist for `notified` decisions too (action `notify`: only step 5 runs) and for `responded` ones (`revoke_sessions` or `revoke_and_lock`). The plan, action and notify roles, is fixed when the job is created; a retry doesn't re-read a policy that may have changed since.
+- `now` in the claim comes from the app's `TimeProvider`, not `now()` in SQL, so tests can move time past a lease or a backoff.
+- A Worker that is shutting down (deploy, scale-down) releases its running job back to `pending` instead of holding it for the rest of the lease. `Responses:Enabled=false` stops a process from running jobs at all.
 
 ### 10.2 Steps (each idempotent on its own)
 
 | # | Step | How it is idempotent |
 | --- | --- | --- |
-| 1 | Revoke all sessions of the user **created at or before `cutoff`** (`cutoff` = the anomaly's `detected_at`, fixed when the job is created) | `UPDATE ... WHERE revoked_at IS NULL` touches nothing the second time. The cutoff means a retry never kills a fresh session the real user created after re-logging in. |
-| 2 | Write `tl:sess:{sid}` = `r` in Redis for each revoked sid | Setting the same value twice is harmless |
-| 3 | If action is `revoke_and_lock`: set `users.security_locked_at` | Only set if null |
-| 4 | Append audit entry `security.response_executed` naming the anomaly, detector, revoked session ids | `audit_log.idempotency_key = 'response:{anomalyId}'` is unique |
-| 5 | Insert one notification per distinct admin user | `UNIQUE (anomaly_id, recipient_user_id)` + `ON CONFLICT DO NOTHING`; recipients computed with `SELECT DISTINCT user_id` across roles |
-| 6 | Mark job `succeeded`, stamp `anomalies.responded_at` | Conditional update |
+| 1 | Revoke all sessions of the user **created at or before `cutoff`** (`cutoff` = the anomaly's `detected_at`, fixed when the job is created), setting `revoked_by_anomaly_id` | Skipped if the job's `revoked_at` marker is set; the marker commits in the same transaction. The cutoff means a revoke never kills a fresh session the real user created after re-logging in. |
+| 2 | Write `tl:sess:{sid}` = `r` in Redis for every session with `revoked_by_anomaly_id` = this anomaly | Always rerun, from durable state; setting the same value twice is harmless. (The Break version used the sids step 1 returned *on this run*, which is empty on a retry.) |
+| 3 | If action is `revoke_and_lock`: set `users.security_locked_at` | Same transaction and marker as step 1; also only set if null. Because of the marker, a retry after an admin's unlock doesn't lock again. |
+| 4 | Append audit entry `security.response_executed` naming the anomaly, detector, revoked session ids (**M7**) | `audit_log.idempotency_key = 'response:{anomalyId}'` is unique |
+| 5 | Notify each distinct admin, grouping repeats ([§10.4](#104-notifications)) | Skipped if the `notified_at` marker is set (same transaction); recipients are `SELECT DISTINCT` users across the notify roles; `UNIQUE (anomaly_id, recipient_user_id)` + `ON CONFLICT DO NOTHING` is the backstop |
+| 6 | Stamp `anomalies.responded_at` (revoke actions only), mark job `succeeded` | Conditional updates (`WHERE responded_at IS NULL`, `WHERE status = 'running'`) |
 
-Steps 1–3 run in one transaction; 4 and 5 each in their own (the audit appender takes a per-org lock). A crash between any two steps is safe because rerunning everything is safe. This is tested by injecting a failure after each step and rerunning ([§17](#17-testing-strategy)).
+Steps 1 and 3 run in one transaction, 5 in another, and 4 (M7) in its own (the audit appender takes a per-org lock). Marker checks read the job row `FOR UPDATE`, so two Workers running the same job after a lease expired take turns, and the second skips what the first did. A crash between any two steps is safe because rerunning everything is safe. This is tested by injecting a crash after each step and rerunning ([§17](#17-testing-strategy)), and measured in Break B4 ([report](../experiments/B4-idempotent-responder.md)).
 
 ### 10.3 Response actions
 
@@ -559,12 +563,14 @@ Steps 1–3 run in one transaction; 4 and 5 each in their own (the audit appende
 | `revoke_sessions` | All sessions die; the user can log in again immediately | None needed |
 | `revoke_and_lock` | All sessions die **and** login is refused until an admin unlocks | Admin "Unlock" in UI (audited) |
 
+`revoke_and_lock` ignores the cutoff and revokes every live session: once the account is closed, a session opened after the detection is as likely to be the attacker's as the user's. Login checks the lock **after** the password: a correct password gets `403` with `code: account_locked` and a clear message, a wrong one gets the usual `401`, so the lock tells an attacker nothing. Refresh refuses locked users too.
+
 Why have a lock at all: revoking sessions does nothing if the attacker has the **password**. They just log in again from Tor, get detected again, and loop. For high-confidence signals the org can choose to lock. Password reset is out of scope, so unlocking is an admin action.
 
 ### 10.4 Notifications
 
 - In-app inbox for admins (`notifications` table), unread badge in the UI.
-- One notification per (anomaly, recipient). Repeated anomalies for the same user within 1 hour are **grouped**: the existing unread notification's `count` and `last_anomaly_id` are updated instead of inserting a new row, so an attack loop does not spam admins.
+- One notification per (anomaly, recipient). Repeated anomalies about the same user (`subject_user_id`) within 1 hour of the entry's `created_at` are **grouped**: the existing unread notification's `count`, `last_anomaly_id` and `updated_at` are updated instead of inserting a new row, so an attack loop does not spam admins. Once read, the next anomaly opens a new entry. A transaction-scoped advisory lock on the subject user stops two concurrent jobs both inserting.
 - A notification never contains note content or full IPs in its title; details are behind the anomaly link.
 - *Stretch:* webhook delivery (ntfy or Discord) with a `notification_deliveries` row per attempt. External sends are at-least-once; the receiver must tolerate duplicates. That limitation is the lesson.
 
@@ -630,7 +636,7 @@ erDiagram
 | Table | Key columns and constraints |
 | --- | --- |
 | `orgs` | `id`, `name`, `slug UNIQUE`, `created_at` |
-| `users` (+ Identity tables renamed to `roles`, `user_roles`, `user_claims`, `user_logins`, `user_tokens`, `role_claims`) | Identity columns + `org_id`, `display_name`, `created_at`; `UNIQUE (normalized_email)`. `security_locked_at`, `security_locked_reason` arrive in M6 |
+| `users` (+ Identity tables renamed to `roles`, `user_roles`, `user_claims`, `user_logins`, `user_tokens`, `role_claims`) | Identity columns + `org_id`, `display_name`, `created_at`; `UNIQUE (normalized_email)`. `security_locked_at`, `security_locked_reason` (M6) |
 | `sessions` | `id`, `user_id`, `org_id`, `created_at`, `created_ip inet`, `created_device_id`, `created_user_agent`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `revoked_reason`, `revoked_by_anomaly_id`. Index `(user_id) WHERE revoked_at IS NULL` |
 | `refresh_tokens` | `id`, `session_id`, `token_hash bytea UNIQUE`, `created_at`, `used_at`, `replaced_by_id` |
 | `user_devices` | `PK (user_id, device_id)`, `first_seen_at`, `last_seen_at`, `last_user_agent` |
@@ -640,8 +646,8 @@ erDiagram
 | `org_policies` | `PK (org_id, version)`, `document jsonb`, `updated_by`, `updated_at` |
 | `tor_exit_snapshots` | `fetched_at`, `ips inet[]` (latest kept) |
 | `anomalies` | `id`, `org_id`, `user_id`, `session_id`, `detector`, `severity`, `dedupe_key`, `evidence jsonb`, `event_ids uuid[]`, `detected_at`, `policy_version`, `decision`, `decision_reason`, `responded_at`. `UNIQUE (org_id, dedupe_key)` |
-| `response_jobs` | `id`, `anomaly_id UNIQUE`, `cutoff`, `action`, `status`, `attempts`, `next_attempt_at`, `locked_until`, `last_error`, `created_at`, `finished_at`. Index `(status, next_attempt_at)` |
-| `notifications` | `id`, `org_id`, `recipient_user_id`, `anomaly_id`, `last_anomaly_id`, `count`, `title`, `created_at`, `read_at`. `UNIQUE (anomaly_id, recipient_user_id)` |
+| `response_jobs` | `id`, `anomaly_id UNIQUE`, `org_id`, `user_id`, `cutoff`, `action`, `notify_roles text[]`, `status`, `attempts`, `next_attempt_at`, `locked_until`, `last_error`, `created_at`, `finished_at`, step markers `revoked_at`, `notified_at`. Index `(status, next_attempt_at)` |
+| `notifications` | `id`, `org_id`, `recipient_user_id`, `subject_user_id`, `anomaly_id`, `last_anomaly_id`, `count`, `title`, `created_at`, `updated_at`, `read_at`. `UNIQUE (anomaly_id, recipient_user_id)`; index `(recipient_user_id, subject_user_id) WHERE read_at IS NULL` for grouping |
 | `audit_log` | `PK (org_id, seq)`, fields from [§11.2](#112-hash-chain), `idempotency_key UNIQUE NULLS DISTINCT` |
 
 Exact column types are settled in the M2–M7 migrations; changes are noted in the journal.
@@ -671,8 +677,8 @@ JSON over HTTPS. Errors use RFC 9457 Problem Details (`application/problem+json`
 | `GET /api/admin/policy`, `PUT /api/admin/policy` | security_admin, owner | Read; edit with `expectedVersion` (new version, `409` if stale) |
 | `GET /api/admin/policy/versions`, `GET /api/admin/policy/versions/{n}` | security_admin, owner | Version history; any past version |
 | `GET /api/admin/audit?afterSeq=`, `POST /api/admin/audit/verify` | security_admin, owner | Browse and verify chain |
-| `GET /api/admin/notifications`, `POST /api/admin/notifications/{id}/read` | admin+ | Inbox |
-| `GET /api/admin/response-jobs?status=`, `POST /api/admin/response-jobs/{id}/retry` | security_admin, owner | Failed and dead jobs |
+| `GET /api/admin/notifications?unreadOnly=`, `POST /api/admin/notifications/{id}/read`, `POST /api/admin/notifications/read-all` | admin+ | Own inbox: `{ unread, items }` |
+| `GET /api/admin/response-jobs?status=`, `POST /api/admin/response-jobs/{id}/retry` | security_admin, owner | Failed and dead jobs (default: dead, and pending with an error); retry only dead jobs (`409` otherwise), keeping step markers |
 | `GET /healthz`, `GET /readyz` | ops | Liveness; readiness (DB + Redis reachable) |
 | `GET /metrics` | ops (cluster-internal only) | Prometheus metrics |
 
@@ -902,7 +908,7 @@ None block M1. Each has a default that applies unless revisited.
 
 | # | Question | Default | Decide by |
 | --- | --- | --- | --- |
-| Q1 | External notification channel (ntfy / Discord webhook)? | In-app only; webhook is a stretch | M6 |
+| Q1 | External notification channel (ntfy / Discord webhook)? | **Resolved (M6):** in-app only. A webhook stays a stretch goal; it can't share the inbox's transaction, so it would be at-least-once with receiver-side dedupe | M6 |
 | Q2 | Redis or its open-source fork Valkey? | **Resolved (M1):** Redis 8.10.2, official image | M1 |
 | Q3 | JWT signing: HS256 or RS256 with key rotation (`kid`)? | HS256; RS256 + rotation as stretch | M3 |
 | Q4 | Format for the recorded failure demo (asciinema, GIF, screen video)? | Screen recording of admin UI + terminal | M11 |

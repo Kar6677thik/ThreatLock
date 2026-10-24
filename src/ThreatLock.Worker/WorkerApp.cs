@@ -2,6 +2,7 @@ using ThreatLock.Core.Detection;
 using ThreatLock.Infrastructure;
 using ThreatLock.Worker.Detection;
 using ThreatLock.Worker.Events;
+using ThreatLock.Worker.Response;
 
 namespace ThreatLock.Worker;
 
@@ -35,6 +36,7 @@ public static class WorkerApp
         builder.Services.AddHostedService<EventSweeper>();
         builder.Services.AddHostedService<EventConsumer>();
         builder.Services.AddHostedService<RetentionPurger>();
+        builder.Services.AddHostedService<ResponseOrchestrator>();
 
         return builder;
     }

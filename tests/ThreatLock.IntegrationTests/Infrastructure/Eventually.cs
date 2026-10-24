@@ -39,6 +39,11 @@ public static class Stores
         await using var command = db.CreateCommand(sql);
         foreach (var arg in args) command.Parameters.AddWithValue(arg);
         var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        if (result is DateTime utc && (typeof(T) == typeof(DateTimeOffset) || typeof(T) == typeof(DateTimeOffset?)))
+        {
+            return (T)(object)new DateTimeOffset(utc);   // Npgsql returns timestamptz as a UTC DateTime
+        }
+
         return result is null or DBNull ? default : (T)result;
     }
 }
