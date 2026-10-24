@@ -13,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ThreatLock.Api\ThreatLock.Api.csproj" />
     <ProjectReference Include="..\..\src\ThreatLock.Infrastructure\ThreatLock.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\ThreatLock.Worker\ThreatLock.Worker.csproj" />
   </ItemGroup>
 
 </Project>
