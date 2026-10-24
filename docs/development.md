@@ -108,6 +108,8 @@ It signs in from a simulated Indian IP, uses the session from a UK IP, then sign
   tor                high    events=2  171.25.193.25 (SE) on login_succeeded  simulated=True
 ```
 
+In the SPA (signed in as an owner or security admin): **Anomalies** lists them with filters and links to each anomaly's evidence and decision; **Policy** edits the org's policy (try switching Tor to *observe*, then rerun the smoke test: the new anomaly says `observed`, policy v1); **Users** adds people and signs them out everywhere. The screens you see depend on your roles.
+
 Simulated IPs work only because Development enables `Simulation` with a dev key (ADR-0007). To poke around yourself: `GET /api/admin/anomalies` as an admin; the stream with `docker compose -f deploy/compose/docker-compose.yml exec redis redis-cli XINFO GROUPS tl:events`; events with `SELECT type, host(ip), geo->>'city' FROM activity_events ORDER BY occurred_at DESC LIMIT 10;`.
 
 The refresh cookie is `Secure`, so curl (unlike a browser) won't send it back over plain `http://127.0.0.1`. To try refresh from the command line, copy the `tl_refresh` value from the login response's `Set-Cookie` header and send it yourself:
@@ -173,6 +175,7 @@ Settings come from `appsettings.json`, then `appsettings.{Environment}.json`, th
 | `Events:StreamName`, `Events:ConsumerGroup`, `Events:ConsumerName` | `tl:events`, `detectors`, machine name | Redis stream wiring (Worker and API must agree on the stream) |
 | `Events:MaxDeliveries`, `Events:ClaimIdle`, `Events:ClaimInterval` | `5`, `00:01:00`, `00:00:30` | When a pending message is reclaimed, and when it's dead-lettered |
 | `Events:SweepInterval`, `Events:SweepMinAge`, `Events:RetentionDays` | `00:00:05`, `00:00:05`, `30` | Outbox sweeper and the activity-event purge |
+| `Policy:CacheSeconds` | `10` | How long the Worker reuses an org's policy; a policy edit applies within this many seconds |
 | `Tor:ListUrl`, `Tor:ListPath`, `Tor:RefreshInterval` | Tor Project URL, none, `01:00:00` | Set `ListPath` to a local file to work offline |
 | `Network:KnownProxies`, `Network:KnownNetworks` | empty | Proxies allowed to set `X-Forwarded-For` (IPs, CIDRs). Empty = trust nobody, use the TCP peer address (ADR-0007) |
 | `Auth:Issuer`, `Auth:Audience` | `threatlock`, `threatlock-api` | Checked on every token |

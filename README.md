@@ -8,7 +8,7 @@ ThreatLock is a learning-scale rebuild of Slack's **Anomaly Event Response** (20
 2. **decides** what to do using each organisation's own policy, exclusions and per-user baselines, and
 3. **responds** automatically by revoking every session of the affected user, writing a tamper-evident audit entry, and notifying admins exactly once.
 
-> **Status:** M4, detection. Every request becomes an activity event that flows through a Redis stream to the Worker, where two detectors (Tor exit nodes, impossible travel) raise de-duplicated anomalies. Decisions and automatic responses come in M5–M6. Revocation is already instant ([B1 report](docs/experiments/B1-stateless-jwt.md)). See the [roadmap](docs/spec/SPEC.md#21-milestones).
+> **Status:** M5, decisions. Detectors (Tor exit nodes, impossible travel) raise anomalies, and each org's versioned policy decides what they mean: suppress, observe, notify or respond. Admins see anomalies and edit policy in the browser. Automatic responses come in M6. Revocation is already instant ([B1 report](docs/experiments/B1-stateless-jwt.md)). See the [roadmap](docs/spec/SPEC.md#21-milestones).
 
 ## Run it locally
 

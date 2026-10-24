@@ -199,6 +199,13 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **Why:** Slack called this out explicitly. Alert fatigue makes admins ignore the alert that matters.
 - **When:** M6.
 
+### 4.4 Optimistic concurrency and lost updates [FG 11]
+
+- **What:** two admins open the policy, both edit, both save. Without protection the second save silently erases the first: a *lost update*. *Optimistic* concurrency doesn't lock anything while people edit; instead each save says "I started from version 4", and the database accepts it only if the current version is still 4. The loser gets `409 Conflict` and reloads.
+- **Why:** policy edits (M5). The version check is part of the `INSERT ... WHERE (current version) = $expected`, and the `(org_id, version)` primary key catches the last race: two saves that both passed the check at the same instant.
+- **When:** M5. Pessimistic locking (hold a lock while the form is open) is the alternative; it's wrong for web forms, which people leave open for hours.
+- **Watch out:** "last write wins" is a design choice, not a default you get for free. Most CRUD code has it by accident.
+
 ---
 
 ## Part 5. Evidence
