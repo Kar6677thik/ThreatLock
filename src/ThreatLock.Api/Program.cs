@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using ThreatLock.Api;
@@ -34,6 +36,10 @@ builder.Services.AddScoped<ActivityRecorder>();
 
 // Errors come back as RFC 9457 problem+json without stack traces (SPEC §13).
 builder.Services.AddProblemDetails();
+
+// Enums travel as strings in snake_case ("respond", "high"), matching stored policy documents.
+builder.Services.ConfigureHttpJsonOptions(o =>
+    o.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower, allowIntegerValues: false)));
 
 // Validates [Required], [StringLength] etc. on request records before the endpoint runs and
 // answers 400 with the field errors (.NET 10 minimal-API validation, source-generated).
@@ -86,6 +92,7 @@ app.MapAuthEndpoints();
 app.MapNoteEndpoints();
 app.MapUserAdminEndpoints();
 app.MapAnomalyEndpoints();
+app.MapPolicyEndpoints();
 
 StartupLog.Starting(app.Logger, AppInfo.Name, "API", AppInfo.Version, app.Environment.EnvironmentName);
 
