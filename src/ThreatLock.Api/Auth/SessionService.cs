@@ -9,11 +9,12 @@ using ThreatLock.Infrastructure.Sessions;
 namespace ThreatLock.Api.Auth;
 
 /// <summary>A new or rotated session: what the client gets back.</summary>
-public sealed record SessionTokens(IssuedToken Access, string RefreshToken, DateTimeOffset RefreshExpiresAt, AppUser User, IReadOnlyList<string> Roles);
+public sealed record SessionTokens(IssuedToken Access, string RefreshToken, DateTimeOffset RefreshExpiresAt, AppUser User, IReadOnlyList<string> Roles, Guid SessionId);
 
 public enum RefreshStatus { Rotated, Invalid, Conflict, ReuseDetected }
 
-public sealed record RefreshResult(RefreshStatus Status, SessionTokens? Tokens = null);
+/// <summary>Outcome of a refresh. The ids are set whenever the token was recognised, so callers can record events.</summary>
+public sealed record RefreshResult(RefreshStatus Status, SessionTokens? Tokens = null, Guid? SessionId = null, Guid? UserId = null, Guid? OrgId = null);
 
 /// <summary>Starts sessions at login and rotates refresh tokens (SPEC §6.2, §6.4).</summary>
 public sealed class SessionService(
@@ -47,7 +48,7 @@ public sealed class SessionService(
         db.RefreshTokens.Add(row);
         await db.SaveChangesAsync(ct);
 
-        return new SessionTokens(tokens.Issue(user, roles, session.Id), plain, session.IdleExpiresAt, user, roles);
+        return new SessionTokens(tokens.Issue(user, roles, session.Id), plain, session.IdleExpiresAt, user, roles, session.Id);
     }
 
     public async Task<RefreshResult> RefreshAsync(string presented, CancellationToken ct)
@@ -60,7 +61,7 @@ public sealed class SessionService(
         var session = await db.Sessions.SingleAsync(s => s.Id == token.SessionId, ct);
         if (!SessionRules.IsActive(session.RevokedAt, session.IdleExpiresAt, session.AbsoluteExpiresAt, now))
         {
-            return new(RefreshStatus.Invalid);
+            return new(RefreshStatus.Invalid, SessionId: session.Id, UserId: session.UserId, OrgId: session.OrgId);
         }
 
         // Claim the token atomically: "set used_at if it's still null". If two requests race,
@@ -79,10 +80,10 @@ public sealed class SessionService(
                 // thief, so the session dies for both (SPEC §6.4). M4 turns this into an event
                 // for detector D5.
                 await store.RevokeAsync(session.Id, RevocationReasons.RefreshTokenReused, ct);
-                return new(RefreshStatus.ReuseDetected);
+                return new(RefreshStatus.ReuseDetected, SessionId: session.Id, UserId: session.UserId, OrgId: session.OrgId);
             }
 
-            return new(RefreshStatus.Conflict);
+            return new(RefreshStatus.Conflict, SessionId: session.Id, UserId: session.UserId, OrgId: session.OrgId);
         }
 
         var user = await users.FindByIdAsync(session.UserId.ToString());
@@ -100,7 +101,8 @@ public sealed class SessionService(
         // Roles are re-read on every refresh, so a role change reaches the user within one access
         // token lifetime (5 minutes) instead of at the next login.
         var roles = (await users.GetRolesAsync(user)).ToArray();
-        return new(RefreshStatus.Rotated, new SessionTokens(tokens.Issue(user, roles, session.Id), plain, session.IdleExpiresAt, user, roles));
+        return new(RefreshStatus.Rotated, new SessionTokens(tokens.Issue(user, roles, session.Id), plain, session.IdleExpiresAt, user, roles, session.Id),
+            session.Id, session.UserId, session.OrgId);
     }
 
     /// <summary>32 random bytes from the OS CSPRNG; only the SHA-256 hash is stored.</summary>

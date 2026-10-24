@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ThreatLock.Api;
 using ThreatLock.Api.Admin;
 using ThreatLock.Api.Auth;
+using ThreatLock.Api.Events;
 using ThreatLock.Api.Notes;
 using ThreatLock.Core;
 using ThreatLock.Infrastructure;
@@ -25,6 +26,11 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddThreatLockInfrastructure();
 builder.Services.AddThreatLockAuth();
 builder.Services.AddThreatLockForwardedHeaders();
+builder.Services.AddOptions<SimulationOptions>()
+    .BindConfiguration(SimulationOptions.SectionName)
+    .Validate(o => !o.Enabled || o.Key.Length >= 16, "Simulation:Key must be at least 16 characters when simulation is enabled")
+    .ValidateOnStart();
+builder.Services.AddScoped<ActivityRecorder>();
 
 // Errors come back as RFC 9457 problem+json without stack traces (SPEC §13).
 builder.Services.AddProblemDetails();
@@ -44,7 +50,15 @@ if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
 }
 
 // First in the pipeline, so everything after it sees the real client IP (ADR-0007).
+// Note the arrival time first: events record when the request *arrived* (SPEC §7.1, §16.2).
+app.Use((context, next) =>
+{
+    context.Items[ActivityRecorder.ReceivedAtItem] = context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
+    return next(context);
+});
 app.UseForwardedHeaders();
+// After forwarded headers, so a valid simulation header wins over the proxy-resolved IP (ADR-0007).
+app.UseMiddleware<SimulationMiddleware>();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseAuthentication();
@@ -71,6 +85,7 @@ app.MapGet("/api/info", (IHostEnvironment env) => new
 app.MapAuthEndpoints();
 app.MapNoteEndpoints();
 app.MapUserAdminEndpoints();
+app.MapAnomalyEndpoints();
 
 StartupLog.Starting(app.Logger, AppInfo.Name, "API", AppInfo.Version, app.Environment.EnvironmentName);
 

@@ -1,5 +1,8 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
+using ThreatLock.Api.Events;
+using ThreatLock.Core.Events;
 using Microsoft.EntityFrameworkCore;
 using ThreatLock.Api.Auth;
 using ThreatLock.Infrastructure.Persistence;
@@ -43,7 +46,7 @@ public static class NoteEndpoints
     private static IQueryable<Note> Readable(ThreatLockDbContext db, Guid userId) =>
         db.Notes.Where(n => n.OwnerId == userId || n.Shared);
 
-    private static async Task<Ok<List<NoteSummary>>> List(ThreatLockDbContext db, CurrentUser me, CancellationToken ct)
+    private static async Task<Ok<List<NoteSummary>>> List(ThreatLockDbContext db, CurrentUser me, ActivityRecorder activity, CancellationToken ct)
     {
         var userId = me.UserId;
         var notes = await Readable(db, userId)
@@ -51,17 +54,22 @@ public static class NoteEndpoints
             .Join(db.Users, n => n.OwnerId, u => u.Id, (n, u) =>
                 new NoteSummary(n.Id, n.Title, n.Shared, n.OwnerId == userId, u.DisplayName, n.UpdatedAt))
             .ToListAsync(ct);
+        await activity.RecordAsync(EventTypes.NoteListed, new JsonObject { ["count"] = notes.Count }, ct);
         return TypedResults.Ok(notes);
     }
 
-    private static async Task<Results<Ok<NoteView>, NotFound>> Get(Guid id, ThreatLockDbContext db, CurrentUser me, CancellationToken ct)
+    private static async Task<Results<Ok<NoteView>, NotFound>> Get(
+        Guid id, ThreatLockDbContext db, CurrentUser me, ActivityRecorder activity, CancellationToken ct)
     {
         var note = await ProjectViews(db, Readable(db, me.UserId).Where(n => n.Id == id), me.UserId).SingleOrDefaultAsync(ct);
-        return note is null ? TypedResults.NotFound() : TypedResults.Ok(note);
+        if (note is null) return TypedResults.NotFound();
+
+        await activity.RecordAsync(EventTypes.NoteRead, new JsonObject { ["noteId"] = id.ToString() }, ct);
+        return TypedResults.Ok(note);
     }
 
     private static async Task<Created<NoteView>> Create(
-        NoteRequest request, ThreatLockDbContext db, CurrentUser me, TimeProvider time, CancellationToken ct)
+        NoteRequest request, ThreatLockDbContext db, CurrentUser me, ActivityRecorder activity, TimeProvider time, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         var note = new Note
@@ -79,11 +87,12 @@ public static class NoteEndpoints
         await db.SaveChangesAsync(ct);
 
         var view = await ProjectViews(db, db.Notes.Where(n => n.Id == note.Id), me.UserId).SingleAsync(ct);
+        await activity.RecordAsync(EventTypes.NoteCreated, new JsonObject { ["noteId"] = note.Id.ToString() }, ct);
         return TypedResults.Created($"/api/notes/{note.Id}", view);
     }
 
     private static async Task<Results<Ok<NoteView>, NotFound, ForbidHttpResult>> Update(
-        Guid id, NoteRequest request, ThreatLockDbContext db, CurrentUser me, TimeProvider time, CancellationToken ct)
+        Guid id, NoteRequest request, ThreatLockDbContext db, CurrentUser me, ActivityRecorder activity, TimeProvider time, CancellationToken ct)
     {
         var note = await Readable(db, me.UserId).SingleOrDefaultAsync(n => n.Id == id, ct);
         if (note is null) return TypedResults.NotFound();
@@ -97,11 +106,12 @@ public static class NoteEndpoints
         await db.SaveChangesAsync(ct);
 
         var view = await ProjectViews(db, db.Notes.Where(n => n.Id == id), me.UserId).SingleAsync(ct);
+        await activity.RecordAsync(EventTypes.NoteUpdated, new JsonObject { ["noteId"] = id.ToString() }, ct);
         return TypedResults.Ok(view);
     }
 
     private static async Task<Results<NoContent, NotFound, ForbidHttpResult>> Delete(
-        Guid id, ThreatLockDbContext db, CurrentUser me, CancellationToken ct)
+        Guid id, ThreatLockDbContext db, CurrentUser me, ActivityRecorder activity, CancellationToken ct)
     {
         var note = await Readable(db, me.UserId).SingleOrDefaultAsync(n => n.Id == id, ct);
         if (note is null) return TypedResults.NotFound();
@@ -109,6 +119,7 @@ public static class NoteEndpoints
 
         db.Notes.Remove(note);
         await db.SaveChangesAsync(ct);
+        await activity.RecordAsync(EventTypes.NoteDeleted, new JsonObject { ["noteId"] = id.ToString() }, ct);
         return TypedResults.NoContent();
     }
 
@@ -117,10 +128,11 @@ public static class NoteEndpoints
     /// exactly what an attacker with a stolen session wants, which is why detector D4 watches it.
     /// </summary>
     private static async Task<FileContentHttpResult> Export(
-        ThreatLockDbContext db, CurrentUser me, TimeProvider time, CancellationToken ct)
+        ThreatLockDbContext db, CurrentUser me, ActivityRecorder activity, TimeProvider time, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         var notes = await ProjectViews(db, Readable(db, me.UserId).OrderBy(n => n.CreatedAt), me.UserId).ToListAsync(ct);
+        await activity.RecordAsync(EventTypes.ExportRequested, new JsonObject { ["noteCount"] = notes.Count }, ct);
         var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             new NotesExport(now, notes.Count, notes), System.Text.Json.JsonSerializerOptions.Web);
         return TypedResults.File(json, "application/json", $"threatlock-notes-{now:yyyyMMdd-HHmmss}.json");

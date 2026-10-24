@@ -2,7 +2,10 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
+using ThreatLock.Api.Events;
+using ThreatLock.Core.Events;
 using ThreatLock.Core.Identity;
 using ThreatLock.Core.Sessions;
 using ThreatLock.Infrastructure.Persistence;
@@ -54,6 +57,7 @@ public static class AuthEndpoints
         ThreatLockDbContext db,
         UserManager<AppUser> users,
         SessionService sessions,
+        ActivityRecorder activity,
         IOptions<AuthOptions> auth,
         TimeProvider time,
         CancellationToken ct)
@@ -114,6 +118,7 @@ public static class AuthEndpoints
         }
 
         var tokens = await sessions.StartAsync(user, roles, ClientInfo.From(http), ct);
+        await activity.RecordAsync(EventTypes.LoginSucceeded, org.Id, user.Id, tokens.SessionId, new JsonObject { ["registration"] = true }, ct);
         return TypedResults.Created("/api/me", Respond(http, tokens, org, auth.Value));
     }
 
@@ -124,6 +129,7 @@ public static class AuthEndpoints
         ThreatLockDbContext db,
         SessionService sessions,
         DummyPasswordHash dummy,
+        ActivityRecorder activity,
         IOptions<AuthOptions> auth,
         CancellationToken ct)
     {
@@ -132,9 +138,18 @@ public static class AuthEndpoints
         // Same answer, and roughly the same time, whether the email is unknown, the account is
         // locked or the password is wrong. Otherwise an attacker could probe which emails have
         // accounts (user enumeration). Hashing a dummy password evens out the timing.
-        if (user is null || await users.IsLockedOutAsync(user))
+        if (user is null)
+        {
+            // Not recorded as an activity event: an unknown email belongs to no org, and events
+            // are per tenant. Guessing across unknown emails is a rate-limiting problem instead.
+            dummy.Verify(request.Password);
+            return Unauthorized(InvalidCredentials);
+        }
+
+        if (await users.IsLockedOutAsync(user))
         {
             dummy.Verify(request.Password);
+            await activity.RecordAsync(EventTypes.LoginFailed, user.OrgId, user.Id, null, new JsonObject { ["reason"] = "locked_out" }, ct);
             return Unauthorized(InvalidCredentials);
         }
 
@@ -142,6 +157,7 @@ public static class AuthEndpoints
         {
             // Counts towards lockout: 5 failures → locked for 15 minutes (AuthSetup).
             await users.AccessFailedAsync(user);
+            await activity.RecordAsync(EventTypes.LoginFailed, user.OrgId, user.Id, null, new JsonObject { ["reason"] = "wrong_password" }, ct);
             return Unauthorized(InvalidCredentials);
         }
 
@@ -149,6 +165,7 @@ public static class AuthEndpoints
 
         var roles = (await users.GetRolesAsync(user)).ToArray();
         var tokens = await sessions.StartAsync(user, roles, ClientInfo.From(http), ct);
+        await activity.RecordAsync(EventTypes.LoginSucceeded, user.OrgId, user.Id, tokens.SessionId, ct: ct);
         var org = await db.Orgs.SingleAsync(o => o.Id == user.OrgId, ct);
         return TypedResults.Ok(Respond(http, tokens, org, auth.Value));
     }
@@ -160,6 +177,7 @@ public static class AuthEndpoints
         HttpContext http,
         SessionService sessions,
         ThreatLockDbContext db,
+        ActivityRecorder activity,
         IOptions<AuthOptions> auth,
         CancellationToken ct)
     {
@@ -177,6 +195,7 @@ public static class AuthEndpoints
         switch (result.Status)
         {
             case RefreshStatus.Rotated:
+                await activity.RecordAsync(EventTypes.TokenRefreshed, result.OrgId!.Value, result.UserId, result.SessionId, ct: ct);
                 var org = await db.Orgs.SingleAsync(o => o.Id == result.Tokens!.User.OrgId, ct);
                 return TypedResults.Ok(Respond(http, result.Tokens!, org, auth.Value));
 
@@ -185,6 +204,13 @@ public static class AuthEndpoints
                 // request that won the race. The client simply retries.
                 return TypedResults.Problem("A refresh is already in progress. Retry.", statusCode: StatusCodes.Status409Conflict);
 
+            case RefreshStatus.ReuseDetected:
+                // A strong theft signal. The session is already revoked (inline, SPEC §6.4);
+                // detector D5 (M8) turns this event into an anomaly so admins hear about it.
+                await activity.RecordAsync(EventTypes.RefreshTokenReused, result.OrgId!.Value, result.UserId, result.SessionId, ct: ct);
+                RefreshCookie.Clear(http.Response, auth.Value.RefreshCookieSecure);
+                return Unauthorized("Your session has ended. Please sign in again.");
+
             default:
                 RefreshCookie.Clear(http.Response, auth.Value.RefreshCookieSecure);
                 return Unauthorized("Your session has ended. Please sign in again.");
@@ -192,8 +218,10 @@ public static class AuthEndpoints
     }
 
     /// <summary>Ends this session on the server. From M3, the token stops working immediately.</summary>
-    private static async Task<NoContent> Logout(HttpContext http, CurrentUser me, SessionStore store, IOptions<AuthOptions> auth, CancellationToken ct)
+    private static async Task<NoContent> Logout(
+        HttpContext http, CurrentUser me, SessionStore store, ActivityRecorder activity, IOptions<AuthOptions> auth, CancellationToken ct)
     {
+        await activity.RecordAsync(EventTypes.Logout, ct: ct);
         await store.RevokeAsync(me.SessionId, RevocationReasons.UserLogout, ct);
         RefreshCookie.Clear(http.Response, auth.Value.RefreshCookieSecure);
         return TypedResults.NoContent();
@@ -219,13 +247,18 @@ public static class AuthEndpoints
     }
 
     private static async Task<Results<NoContent, NotFound>> RevokeMySession(
-        Guid sid, CurrentUser me, ThreatLockDbContext db, SessionStore store, CancellationToken ct)
+        Guid sid, CurrentUser me, ThreatLockDbContext db, SessionStore store, ActivityRecorder activity, CancellationToken ct)
     {
         // Only your own sessions; someone else's session id is simply "not found".
         var mine = await db.Sessions.AnyAsync(s => s.Id == sid && s.UserId == me.UserId, ct);
         if (!mine) return TypedResults.NotFound();
 
-        await store.RevokeAsync(sid, RevocationReasons.UserRevoked, ct);
+        if (await store.RevokeAsync(sid, RevocationReasons.UserRevoked, ct))
+        {
+            await activity.RecordAsync(EventTypes.SessionRevoked, me.RequiredOrgId, me.UserId, sid,
+                new JsonObject { ["reason"] = RevocationReasons.UserRevoked, ["by"] = me.UserId.ToString() }, ct);
+        }
+
         return TypedResults.NoContent();
     }
 
