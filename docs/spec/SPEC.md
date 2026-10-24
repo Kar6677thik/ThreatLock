@@ -584,6 +584,10 @@ Security-relevant actions only (not every note read; that is what activity event
 
 Audit entries **must not** contain passwords, tokens, refresh-token hashes or note content.
 
+As built (M7), the actions are: `org.created`, `auth.login_succeeded`, `auth.locked_out` (Identity's wrong-password lockout), `auth.logout`, `session.revoked` (own device, refresh-token reuse), `session.revoked_all` (admin), `user.created`, `user.roles_changed`, `user.unlocked`, `policy.updated`, `security.anomaly_decided` (`notified` and `responded` only), `security.response_executed`, `notes.exported` (the count, not the content). Actors are `user` (on their own account), `admin` (on someone else or the org) and `system` (the Worker).
+
+Where an action already runs in a transaction (sign-up, user creation, role changes, unlock, policy save, an anomaly with its job), its entry is appended **inside** that transaction and commits with it. Single-statement actions (login, logout, revoking a session, export) are audited right after, in their own transaction; a crash in between loses that entry, which is accepted because the activity event and the session row still record them.
+
 ### 11.2 Hash chain
 
 Each org has its own chain. Entry fields:
@@ -595,7 +599,14 @@ entry_hash = SHA-256( prev_hash || canonical(entry without entry_hash) )
 prev_hash of seq 1 = 32 zero bytes
 ```
 
-`canonical()` is defined in code once and unit-tested: fields in a fixed order, each written as `name=len:value\n`, timestamps as ISO-8601 UTC with microseconds, JSON details serialised with sorted keys. Length prefixes stop ambiguity attacks like `"ab"+"c"` vs `"a"+"bc"`.
+`canonical()` is defined in code once (`AuditChain.Canonical`) and unit-tested: fields in a fixed order, each written as `name=len:value\n` with `len` in UTF-8 bytes and null as `name=~\n` (so null and `""` differ), timestamps as ISO-8601 UTC with microseconds, JSON details serialised compactly with keys sorted at every level, hashes as lowercase hex. Length prefixes stop ambiguity attacks like `"ab"+"c"` vs `"a"+"bc"`.
+
+Two details matter in practice:
+
+- **Microseconds:** PostgreSQL keeps microseconds and .NET has 100 ns ticks, so the timestamp is truncated *before* hashing; otherwise the stored value would never re-hash to the same result.
+- **Sorted keys:** `details` is `jsonb`, which hands keys back in its own order; sorting makes the hash independent of that. Details hold only strings, integers, booleans, arrays and objects, because `jsonb` may rewrite other number formats.
+
+Entries with an `idempotency_key` (`anomaly:{id}`, `response:{anomalyId}`) are written once: the key is checked under the lock, and `UNIQUE` backs it up.
 
 **Appending** (inside one transaction): `pg_advisory_xact_lock(hash(org_id))` → read the last `(seq, entry_hash)` for the org → compute → insert. The advisory lock serialises appends per org so two writers can never fork the chain; `UNIQUE (org_id, seq)` is the backstop.
 
@@ -603,13 +614,21 @@ prev_hash of seq 1 = 32 zero bytes
 
 | Layer | Stops |
 | --- | --- |
-| App DB role has only `INSERT, SELECT` on `audit_log` (no `UPDATE`, `DELETE`, `TRUNCATE`) | Bugs and SQL injection in the app |
+| A trigger refuses `UPDATE`, `DELETE` and `TRUNCATE` for **every** role, including the table owner (the app connects as the owner until M10) | Bugs and SQL injection in the app; a careless admin. Only a superuser can switch it off (`session_replication_role = replica`) |
+| App DB role has only `INSERT, SELECT` on `audit_log` (no `UPDATE`, `DELETE`, `TRUNCATE`); the migration grants this once the `threatlock_app` role exists (M10) | The same, enforced by permissions instead of a trigger |
 | Hash chain + verify | Edits by someone with superuser access (detected, not prevented) |
-| *Stretch:* periodic **anchor**: publish the head hash per org somewhere outside the database (a log line shipped elsewhere, or a file in another repo) | Rewriting the *entire* chain from the edit point onward, which a chain alone cannot detect |
+| **Anchor** (built in M7, manual): verify returns the head (`seq`, `hash`); an admin saves it somewhere outside the database, and later passes it to verify, which checks the entry at that seq still has that hash. *Stretch:* publish heads automatically | Rewriting the *entire* chain from the edit point onward, and deleting entries off the end, neither of which a chain alone can detect |
 
 ### 11.4 Verify
 
-`POST /api/admin/audit/verify` (and `Simulator audit verify`) walks the org's chain in `seq` order and returns `{ ok: true, entries: N, head: "<hash>" }` or `{ ok: false, firstBrokenSeq: 42, reason: "hash_mismatch" | "seq_gap" }`.
+`POST /api/admin/audit/verify` (and `Simulator audit verify`, M9) walks the org's chain in `seq` order, streaming, and returns `{ ok: true, entries: N, head: "<hash>" }` or `{ ok: false, entries: <intact before it>, firstBrokenSeq: 42, reason }`. It answers `200` either way: a broken chain is a finding, not an error. The body may carry `{ "anchor": { "seq": N, "hash": "<hex>" } }`.
+
+| `reason` | Meaning |
+| --- | --- |
+| `hash_mismatch` | The entry's contents don't hash to its stored hash: **this entry** was edited |
+| `chain_break` | The entry is self-consistent but its `prev_hash` isn't the previous entry's hash: the previous entry was edited *and re-hashed* |
+| `seq_gap` | A seq is missing: an entry was deleted |
+| `anchor_mismatch` | The entry at the anchor's seq has a different hash, or no longer exists: the chain was rewritten or cut short since the anchor was saved |
 
 ---
 
@@ -648,7 +667,7 @@ erDiagram
 | `anomalies` | `id`, `org_id`, `user_id`, `session_id`, `detector`, `severity`, `dedupe_key`, `evidence jsonb`, `event_ids uuid[]`, `detected_at`, `policy_version`, `decision`, `decision_reason`, `responded_at`. `UNIQUE (org_id, dedupe_key)` |
 | `response_jobs` | `id`, `anomaly_id UNIQUE`, `org_id`, `user_id`, `cutoff`, `action`, `notify_roles text[]`, `status`, `attempts`, `next_attempt_at`, `locked_until`, `last_error`, `created_at`, `finished_at`, step markers `revoked_at`, `notified_at`. Index `(status, next_attempt_at)` |
 | `notifications` | `id`, `org_id`, `recipient_user_id`, `subject_user_id`, `anomaly_id`, `last_anomaly_id`, `count`, `title`, `created_at`, `updated_at`, `read_at`. `UNIQUE (anomaly_id, recipient_user_id)`; index `(recipient_user_id, subject_user_id) WHERE read_at IS NULL` for grouping |
-| `audit_log` | `PK (org_id, seq)`, fields from [§11.2](#112-hash-chain), `idempotency_key UNIQUE NULLS DISTINCT` |
+| `audit_log` | `PK (org_id, seq)`, fields from [§11.2](#112-hash-chain) (`seq bigint`, `details jsonb`, `prev_hash`/`entry_hash bytea`), `idempotency_key UNIQUE NULLS DISTINCT`; FK to `orgs` with `RESTRICT`; append-only triggers |
 
 Exact column types are settled in the M2–M7 migrations; changes are noted in the journal.
 
@@ -676,7 +695,7 @@ JSON over HTTPS. Errors use RFC 9457 Problem Details (`application/problem+json`
 | `GET /api/admin/anomalies?decision=&detector=`, `GET /api/admin/anomalies/{id}` | admin+ | List and inspect, with timeline |
 | `GET /api/admin/policy`, `PUT /api/admin/policy` | security_admin, owner | Read; edit with `expectedVersion` (new version, `409` if stale) |
 | `GET /api/admin/policy/versions`, `GET /api/admin/policy/versions/{n}` | security_admin, owner | Version history; any past version |
-| `GET /api/admin/audit?afterSeq=`, `POST /api/admin/audit/verify` | security_admin, owner | Browse and verify chain |
+| `GET /api/admin/audit?afterSeq=&limit=`, `POST /api/admin/audit/verify` | security_admin, owner | Browse (oldest first, paged by seq) and verify the chain, optionally against an anchor |
 | `GET /api/admin/notifications?unreadOnly=`, `POST /api/admin/notifications/{id}/read`, `POST /api/admin/notifications/read-all` | admin+ | Own inbox: `{ unread, items }` |
 | `GET /api/admin/response-jobs?status=`, `POST /api/admin/response-jobs/{id}/retry` | security_admin, owner | Failed and dead jobs (default: dead, and pending with an error); retry only dead jobs (`409` otherwise), keeping step markers |
 | `GET /healthz`, `GET /readyz` | ops | Liveness; readiness (DB + Redis reachable) |

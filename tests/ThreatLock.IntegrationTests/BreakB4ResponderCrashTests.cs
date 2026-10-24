@@ -31,7 +31,7 @@ public class BreakB4ResponderCrashTests(ContainersFixture containers)
     {
         var (org, users) = await h.SeedOrgAsync([Roles.Owner], [Roles.Admin], [Roles.Admin, Roles.SecurityAdmin], []);
         var victim = users[3];
-        ResponseStep[] steps = [ResponseStep.Revoked, ResponseStep.CacheMarked, ResponseStep.Notified];
+        ResponseStep[] steps = [ResponseStep.Revoked, ResponseStep.CacheMarked, ResponseStep.Notified];   // as at the tag, so the runs compare
         var sessions = new List<Guid>();
 
         for (var i = 0; i < Crashes; i++)

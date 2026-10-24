@@ -1,3 +1,5 @@
+using ThreatLock.Core.Audit;
+using ThreatLock.Infrastructure.Audit;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -128,11 +130,14 @@ public static class NoteEndpoints
     /// exactly what an attacker with a stolen session wants, which is why detector D4 watches it.
     /// </summary>
     private static async Task<FileContentHttpResult> Export(
-        ThreatLockDbContext db, CurrentUser me, ActivityRecorder activity, TimeProvider time, CancellationToken ct)
+        ThreatLockDbContext db, CurrentUser me, ActivityRecorder activity, AuditLog audit, TimeProvider time, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         var notes = await ProjectViews(db, Readable(db, me.UserId).OrderBy(n => n.CreatedAt), me.UserId).ToListAsync(ct);
         await activity.RecordAsync(EventTypes.ExportRequested, new JsonObject { ["noteCount"] = notes.Count }, ct);
+        // The count, never the content (SPEC §11.1).
+        await audit.AppendAsync(new AuditRecord(me.RequiredOrgId, ActorTypes.User, me.UserId, AuditActions.NotesExported, "user", me.UserId.ToString(),
+            Details: new JsonObject { ["noteCount"] = notes.Count }), ct);
         var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             new NotesExport(now, notes.Count, notes), System.Text.Json.JsonSerializerOptions.Web);
         return TypedResults.File(json, "application/json", $"threatlock-notes-{now:yyyyMMdd-HHmmss}.json");

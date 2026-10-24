@@ -1,7 +1,10 @@
 using Npgsql;
+using System.Text.Json.Nodes;
+using ThreatLock.Core.Audit;
 using ThreatLock.Core.Detection;
 using ThreatLock.Core.Policy;
 using ThreatLock.Core.Response;
+using ThreatLock.Infrastructure.Audit;
 using ThreatLock.Infrastructure.Response;
 
 namespace ThreatLock.Infrastructure.Detection;
@@ -9,7 +12,7 @@ namespace ThreatLock.Infrastructure.Detection;
 public sealed record AnomalyUpsert(Guid Id, bool Created, Guid? JobId = null);
 
 /// <summary>Persists detection signals as anomalies, de-duplicated (SPEC §8.3).</summary>
-public sealed class AnomalyStore(NpgsqlDataSource db, TimeProvider time)
+public sealed class AnomalyStore(NpgsqlDataSource db, AuditLog audit, TimeProvider time)
 {
     /// <summary>
     /// Inserts a new anomaly, or, if one with the same <c>(org_id, dedupe_key)</c> exists, adds the
@@ -24,7 +27,8 @@ public sealed class AnomalyStore(NpgsqlDataSource db, TimeProvider time)
     /// the policy version in force when it was first detected (SPEC §9.1).</param>
     /// <param name="plan">If not null and the anomaly is new, a response job is created in the
     /// <em>same transaction</em> (SPEC §10.1): either both exist or neither does, so a crash
-    /// can't leave a "responded" anomaly that nobody acts on.</param>
+    /// can't leave a "responded" anomaly that nobody acts on. The decision is audited in the same
+    /// transaction too (SPEC §11.1: decisions that lead to action).</param>
     public async Task<AnomalyUpsert> UpsertAsync(DetectionSignal signal, Decision decision, int policyVersion, ResponsePlan? plan, CancellationToken ct)
     {
         var now = time.GetUtcNow();
@@ -69,6 +73,18 @@ public sealed class AnomalyStore(NpgsqlDataSource db, TimeProvider time)
         if (created && plan is not null)
         {
             jobId = await ResponseJobStore.CreateAsync(connection, transaction, id, signal, plan, now, ct);
+            await audit.AppendAsync(connection, transaction, new AuditRecord(
+                signal.OrgId, ActorTypes.System, null, AuditActions.AnomalyDecided, "user", signal.UserId.ToString(), id,
+                new JsonObject
+                {
+                    ["detector"] = signal.Detector,
+                    ["severity"] = signal.Severity.ToString().ToLowerInvariant(),
+                    ["decision"] = decision.Outcome.ToString().ToLowerInvariant(),
+                    ["reason"] = decision.Reason,
+                    ["policyVersion"] = policyVersion,
+                    ["action"] = plan.Action,
+                },
+                IdempotencyKey: $"anomaly:{id}"), ct);
         }
 
         await transaction.CommitAsync(ct);

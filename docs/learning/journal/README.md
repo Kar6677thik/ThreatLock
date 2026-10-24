@@ -11,7 +11,7 @@ One file per milestone, written **during** the work. It's the story of the build
 | M4 Event pipeline + D1, D2 | [M4-event-pipeline.md](M4-event-pipeline.md) |
 | M5 Decision framework + admin UI | [M5-decision-framework.md](M5-decision-framework.md) |
 | M6 Response orchestrator | [M6-response-orchestrator.md](M6-response-orchestrator.md) |
-| M7 Audit log | *not started* |
+| M7 Audit log | [M7-audit-log.md](M7-audit-log.md) |
 | M8 Remaining detectors | *not started* |
 | M9 Simulator and evaluation | *not started* |
 | M10 Deployment | *not started* |

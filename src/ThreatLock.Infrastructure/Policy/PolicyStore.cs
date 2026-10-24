@@ -1,9 +1,13 @@
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Text.Json.Nodes;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using ThreatLock.Core.Audit;
 using ThreatLock.Core.Policy;
+using ThreatLock.Infrastructure.Audit;
 using ThreatLock.Infrastructure.Persistence;
 
 namespace ThreatLock.Infrastructure.Policy;
@@ -33,7 +37,7 @@ public static class PolicyJson
 }
 
 /// <summary>Reads and versions org policies (SPEC §9.1).</summary>
-public sealed class PolicyStore(NpgsqlDataSource db, IOptions<PolicyOptions> options, TimeProvider time)
+public sealed class PolicyStore(NpgsqlDataSource db, AuditLog audit, IOptions<PolicyOptions> options, TimeProvider time)
 {
     private readonly ConcurrentDictionary<Guid, (StoredPolicy Policy, DateTimeOffset Expires)> cache = new();
 
@@ -75,12 +79,14 @@ public sealed class PolicyStore(NpgsqlDataSource db, IOptions<PolicyOptions> opt
     /// </summary>
     public async Task<int?> SaveAsync(Guid orgId, int expectedVersion, SecurityPolicy policy, Guid updatedBy, CancellationToken ct)
     {
-        await using var command = db.CreateCommand(
+        await using var connection = await db.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        await using var command = new NpgsqlCommand(
             """
             INSERT INTO org_policies (org_id, version, document, updated_by, updated_at)
             SELECT $1, $2 + 1, $3::jsonb, $4, $5
             WHERE COALESCE((SELECT max(version) FROM org_policies WHERE org_id = $1), 0) = $2
-            """);
+            """, connection, transaction);
         command.Parameters.AddWithValue(orgId);
         command.Parameters.AddWithValue(expectedVersion);
         command.Parameters.AddWithValue(JsonSerializer.Serialize(policy, PolicyJson.Options));
@@ -89,7 +95,7 @@ public sealed class PolicyStore(NpgsqlDataSource db, IOptions<PolicyOptions> opt
 
         try
         {
-            return await command.ExecuteNonQueryAsync(ct) == 1 ? expectedVersion + 1 : null;
+            if (await command.ExecuteNonQueryAsync(ct) == 0) return null;
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
         {
@@ -97,6 +103,16 @@ public sealed class PolicyStore(NpgsqlDataSource db, IOptions<PolicyOptions> opt
             // exactly one through.
             return null;
         }
+
+        // Audited in the same transaction: a policy change and its audit entry exist together or
+        // not at all (SPEC §11.1). The entry names the versions; the document itself is in
+        // org_policies, which is never updated in place.
+        var version = expectedVersion + 1;
+        await audit.AppendAsync(connection, transaction, new AuditRecord(
+            orgId, ActorTypes.Admin, updatedBy, AuditActions.PolicyUpdated, "policy", version.ToString(CultureInfo.InvariantCulture),
+            Details: new JsonObject { ["fromVersion"] = expectedVersion, ["toVersion"] = version }), ct);
+        await transaction.CommitAsync(ct);
+        return version;
     }
 
     public async Task<IReadOnlyList<(int Version, DateTimeOffset UpdatedAt, Guid? UpdatedBy)>> ListVersionsAsync(Guid orgId, CancellationToken ct)

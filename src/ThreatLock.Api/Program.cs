@@ -95,6 +95,7 @@ app.MapAnomalyEndpoints();
 app.MapPolicyEndpoints();
 app.MapNotificationEndpoints();
 app.MapResponseJobEndpoints();
+app.MapAuditEndpoints();
 
 StartupLog.Starting(app.Logger, AppInfo.Name, "API", AppInfo.Version, app.Environment.EnvironmentName);
 

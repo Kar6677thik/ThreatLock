@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ThreatLock.Core.Detection;
 using ThreatLock.Core.Geo;
+using ThreatLock.Infrastructure.Audit;
 using ThreatLock.Infrastructure.Detection;
 using ThreatLock.Infrastructure.Events;
 using ThreatLock.Infrastructure.Geo;
@@ -63,6 +64,9 @@ public static class ServiceCollectionExtensions
         // EF Core reuses the same NpgsqlDataSource (and so the same connection pool).
         services.AddDbContext<ThreatLockDbContext>((sp, options) =>
             DbContextConfiguration.Configure(options, sp.GetRequiredService<NpgsqlDataSource>()));
+
+        // The tamper-evident audit log (SPEC §11), written by both the API and the Worker.
+        services.AddSingleton<AuditLog>();
 
         // Shared by the API (checks on every request) and the Worker (revokes in M6).
         services.AddSingleton<SessionStore>();

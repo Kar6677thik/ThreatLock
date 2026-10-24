@@ -481,6 +481,82 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                     b.ToTable("users", (string)null);
                 });
 
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.AuditLogEntry", b =>
+                {
+                    b.Property<Guid>("OrgId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("org_id");
+
+                    b.Property<long>("Seq")
+                        .HasColumnType("bigint")
+                        .HasColumnName("seq");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("action");
+
+                    b.Property<Guid?>("ActorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_id");
+
+                    b.Property<string>("ActorType")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("actor_type");
+
+                    b.Property<Guid?>("AnomalyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("anomaly_id");
+
+                    b.Property<string>("Details")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("details");
+
+                    b.Property<byte[]>("EntryHash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("bytea")
+                        .HasColumnName("entry_hash");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<byte[]>("PrevHash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("bytea")
+                        .HasColumnName("prev_hash");
+
+                    b.Property<string>("TargetId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("target_id");
+
+                    b.Property<string>("TargetType")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("target_type");
+
+                    b.HasKey("OrgId", "Seq")
+                        .HasName("pk_audit_log");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_audit_log_idempotency_key");
+
+                    b.ToTable("audit_log", (string)null);
+                });
+
             modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.Note", b =>
                 {
                     b.Property<Guid>("Id")
@@ -970,6 +1046,16 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_users_orgs_org_id");
 
                     b.Navigation("Org");
+                });
+
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.AuditLogEntry", b =>
+                {
+                    b.HasOne("ThreatLock.Infrastructure.Persistence.Org", null)
+                        .WithMany()
+                        .HasForeignKey("OrgId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_audit_log_orgs_org_id");
                 });
 
             modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.Note", b =>

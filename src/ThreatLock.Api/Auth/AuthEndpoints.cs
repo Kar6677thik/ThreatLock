@@ -4,10 +4,13 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
+using ThreatLock.Api.Audit;
 using ThreatLock.Api.Events;
+using ThreatLock.Core.Audit;
 using ThreatLock.Core.Events;
 using ThreatLock.Core.Identity;
 using ThreatLock.Core.Sessions;
+using ThreatLock.Infrastructure.Audit;
 using ThreatLock.Infrastructure.Persistence;
 using ThreatLock.Infrastructure.Sessions;
 
@@ -61,6 +64,7 @@ public static class AuthEndpoints
         UserManager<AppUser> users,
         SessionService sessions,
         ActivityRecorder activity,
+        AuditLog audit,
         IOptions<AuthOptions> auth,
         TimeProvider time,
         CancellationToken ct)
@@ -112,6 +116,9 @@ public static class AuthEndpoints
             var assigned = await users.AddToRolesAsync(user, roles);
             if (!assigned.Succeeded) return IdentityProblem(assigned);
 
+            // seq 1 of the org's audit chain, committed with the org itself.
+            await audit.AppendAsync(db, new AuditRecord(org.Id, ActorTypes.Admin, user.Id, AuditActions.OrgCreated, "org", org.Id.ToString(),
+                Details: new JsonObject { ["slug"] = org.Slug, ["owner"] = user.Id.ToString() }), ct);
             await transaction.CommitAsync(ct);
         }
         catch (DbUpdateException ex) when (ex.IsUniqueViolation())
@@ -120,8 +127,10 @@ public static class AuthEndpoints
             return Conflict("That organisation address or email is already taken.");
         }
 
-        var tokens = await sessions.StartAsync(user, roles, ClientInfo.From(http), ct);
+        var client = ClientInfo.From(http);
+        var tokens = await sessions.StartAsync(user, roles, client, ct);
         await activity.RecordAsync(EventTypes.LoginSucceeded, org.Id, user.Id, tokens.SessionId, new JsonObject { ["registration"] = true }, ct);
+        await audit.AppendAsync(LoginAudit(user, tokens.SessionId, client), ct);
         return TypedResults.Created("/api/me", Respond(http, tokens, org, auth.Value));
     }
 
@@ -133,6 +142,7 @@ public static class AuthEndpoints
         SessionService sessions,
         DummyPasswordHash dummy,
         ActivityRecorder activity,
+        AuditLog audit,
         IOptions<AuthOptions> auth,
         CancellationToken ct)
     {
@@ -161,6 +171,13 @@ public static class AuthEndpoints
             // Counts towards lockout: 5 failures → locked for 15 minutes (AuthSetup).
             await users.AccessFailedAsync(user);
             await activity.RecordAsync(EventTypes.LoginFailed, user.OrgId, user.Id, null, new JsonObject { ["reason"] = "wrong_password" }, ct);
+            if (await users.IsLockedOutAsync(user))
+            {
+                // This failure was the one that tipped the account into lockout.
+                await audit.AppendAsync(new AuditRecord(user.OrgId, ActorTypes.System, null, AuditActions.LockedOut, "user", user.Id.ToString(),
+                    Details: new JsonObject { ["until"] = user.LockoutEnd?.ToString("O") }), ct);
+            }
+
             return Unauthorized(InvalidCredentials);
         }
 
@@ -179,8 +196,10 @@ public static class AuthEndpoints
         }
 
         var roles = (await users.GetRolesAsync(user)).ToArray();
-        var tokens = await sessions.StartAsync(user, roles, ClientInfo.From(http), ct);
+        var client = ClientInfo.From(http);
+        var tokens = await sessions.StartAsync(user, roles, client, ct);
         await activity.RecordAsync(EventTypes.LoginSucceeded, user.OrgId, user.Id, tokens.SessionId, ct: ct);
+        await audit.AppendAsync(LoginAudit(user, tokens.SessionId, client), ct);
         var org = await db.Orgs.SingleAsync(o => o.Id == user.OrgId, ct);
         return TypedResults.Ok(Respond(http, tokens, org, auth.Value));
     }
@@ -193,6 +212,7 @@ public static class AuthEndpoints
         SessionService sessions,
         ThreatLockDbContext db,
         ActivityRecorder activity,
+        AuditLog audit,
         IOptions<AuthOptions> auth,
         CancellationToken ct)
     {
@@ -223,6 +243,8 @@ public static class AuthEndpoints
                 // A strong theft signal. The session is already revoked (inline, SPEC §6.4);
                 // detector D5 (M8) turns this event into an anomaly so admins hear about it.
                 await activity.RecordAsync(EventTypes.RefreshTokenReused, result.OrgId!.Value, result.UserId, result.SessionId, ct: ct);
+                await audit.AppendAsync(SessionRevokedAudit(result.OrgId.Value, ActorTypes.System, null, result.SessionId!.Value, result.UserId,
+                    RevocationReasons.RefreshTokenReused), ct);
                 RefreshCookie.Clear(http.Response, auth.Value.RefreshCookieSecure);
                 return Unauthorized("Your session has ended. Please sign in again.");
 
@@ -234,10 +256,14 @@ public static class AuthEndpoints
 
     /// <summary>Ends this session on the server. From M3, the token stops working immediately.</summary>
     private static async Task<NoContent> Logout(
-        HttpContext http, CurrentUser me, SessionStore store, ActivityRecorder activity, IOptions<AuthOptions> auth, CancellationToken ct)
+        HttpContext http, CurrentUser me, SessionStore store, ActivityRecorder activity, AuditLog audit, IOptions<AuthOptions> auth, CancellationToken ct)
     {
         await activity.RecordAsync(EventTypes.Logout, ct: ct);
-        await store.RevokeAsync(me.SessionId, RevocationReasons.UserLogout, ct);
+        if (await store.RevokeAsync(me.SessionId, RevocationReasons.UserLogout, ct))
+        {
+            await audit.AppendAsync(new AuditRecord(me.RequiredOrgId, ActorTypes.User, me.UserId, AuditActions.Logout, "session", me.SessionId.ToString()), ct);
+        }
+
         RefreshCookie.Clear(http.Response, auth.Value.RefreshCookieSecure);
         return TypedResults.NoContent();
     }
@@ -262,7 +288,7 @@ public static class AuthEndpoints
     }
 
     private static async Task<Results<NoContent, NotFound>> RevokeMySession(
-        Guid sid, CurrentUser me, ThreatLockDbContext db, SessionStore store, ActivityRecorder activity, CancellationToken ct)
+        Guid sid, CurrentUser me, ThreatLockDbContext db, SessionStore store, ActivityRecorder activity, AuditLog audit, CancellationToken ct)
     {
         // Only your own sessions; someone else's session id is simply "not found".
         var mine = await db.Sessions.AnyAsync(s => s.Id == sid && s.UserId == me.UserId, ct);
@@ -272,6 +298,7 @@ public static class AuthEndpoints
         {
             await activity.RecordAsync(EventTypes.SessionRevoked, me.RequiredOrgId, me.UserId, sid,
                 new JsonObject { ["reason"] = RevocationReasons.UserRevoked, ["by"] = me.UserId.ToString() }, ct);
+            await audit.AppendAsync(SessionRevokedAudit(me.RequiredOrgId, ActorTypes.User, me.UserId, sid, me.UserId, RevocationReasons.UserRevoked), ct);
         }
 
         return TypedResults.NoContent();
@@ -292,6 +319,15 @@ public static class AuthEndpoints
         var view = new UserView(user.Id, user.Email!, user.DisplayName, org.Id, org.Name, org.Slug, tokens.Roles);
         return new LoginResponse(tokens.Access.AccessToken, tokens.Access.ExpiresAt, view);
     }
+
+    /// <summary>Who signed in, to which session, from where. IPs are fine in the audit log; tokens never are.</summary>
+    private static AuditRecord LoginAudit(AppUser user, Guid sessionId, ClientInfo client) =>
+        new(user.OrgId, ActorTypes.User, user.Id, AuditActions.LoginSucceeded, "session", sessionId.ToString(),
+            Details: new JsonObject { ["ip"] = client.Ip?.ToString(), ["deviceId"] = client.DeviceId });
+
+    internal static AuditRecord SessionRevokedAudit(Guid orgId, string actorType, Guid? actorId, Guid sessionId, Guid? userId, string reason) =>
+        new(orgId, actorType, actorId, AuditActions.SessionRevoked, "session", sessionId.ToString(),
+            Details: new JsonObject { ["reason"] = reason, ["user"] = userId?.ToString() });
 
     private static ProblemHttpResult Unauthorized(string detail) =>
         TypedResults.Problem(detail, statusCode: StatusCodes.Status401Unauthorized);
