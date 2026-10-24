@@ -44,17 +44,22 @@ public class StreamReliabilityTests(ContainersFixture containers)
     [Fact]
     public async Task Events_that_missed_the_stream_are_published_by_the_sweeper()
     {
-        // The API can't reach Redis, so events are saved with published_at = null...
+        // This API can't reach Redis, so its own publish always fails: anything of its that reaches
+        // the stream was put there by the Worker's sweeper. (Don't assert "nothing published yet"
+        // first: the shared sweeper runs every 200 ms and can win that race. CI proved it.)
         await using var api = new ThreatLockApiFactory(containers.Postgres.GetConnectionString(), "127.0.0.1:1");
         var owner = await api.RegisterOrgAsync();
         await owner.Client.GetAsync("/api/notes", Ct);
-        Assert.Equal(0, await containers.ScalarAsync<long>(
-            "SELECT count(*) FROM activity_events WHERE user_id = $1 AND published_at IS NOT NULL", owner.User.Id));
+        var saved = await containers.ScalarAsync<Guid>(
+            "SELECT id FROM activity_events WHERE user_id = $1 AND type = 'note_listed'", owner.User.Id);
+        Assert.NotEqual(Guid.Empty, saved);   // saved despite Redis being down
 
-        // ...and the Worker's sweeper (which can reach Redis) publishes them.
         await Eventually.TrueAsync(async () => await containers.ScalarAsync<long>(
             "SELECT count(*) FROM activity_events WHERE user_id = $1 AND published_at IS NULL", owner.User.Id) == 0,
             what: "sweeper to publish");
+        var redis = await containers.RedisAsync();
+        var onStream = await redis.StreamRangeAsync("tl:events", "-", "+");
+        Assert.Contains(onStream, entry => entry["id"] == saved.ToString());
     }
 
     [Fact]

@@ -69,6 +69,7 @@ Decisions and automatic responses are M5 and M6. M4 only *finds* things.
 - **`head -1` broke a script under `set -o pipefail`.** `head` exits after one line, `curl` gets a broken pipe (exit 23), and pipefail reports failure. `sed -n 1p` reads the whole stream.
 - **The Tor exit in the smoke test produced a second impossible-travel anomaly** (London → Stockholm in seconds), correctly marked `high` because the destination is a Tor exit. Two detectors corroborating each other is exactly what M5's decision step will use.
 - **A Worker `Program` class clashed with the API's** in the test project. The Worker's `Program` stays internal.
+- **CI caught a race in a test, three green local runs didn't.** The sweeper test first asserted "nothing is published yet", but the shared Worker sweeps every 200 ms and on GitHub's faster runner it won (expected 0, got 2). The *precondition* was the bug, not the product. Now the test proves the point directly: the API under test can't reach Redis, so if its event id appears on the stream, the sweeper put it there. Lesson: in tests of asynchronous systems, assert outcomes, never "it hasn't happened yet".
 - **Proving a negative needs a marker.** The first draft of the "Chennai isn't impossible travel" test used a Tor login as its "processing finished" marker, which would itself have been impossible travel from Chennai. The marker now comes from a different user (concepts.md §6.5).
 
 ## Numbers

@@ -254,6 +254,7 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
   3. **Isolate timing-sensitive tests.** Tests that tweak timeouts or inject poison messages run their own Worker on their own stream (or Redis database), so they can't disturb anyone else.
 - **Why:** M4's end-to-end tests run the real API and the real Worker against real PostgreSQL and Redis.
 - **When:** M4 onwards.
+- **Watch out:** "it hasn't happened *yet*" assertions. Asserting an intermediate state (e.g. "not published yet") races the background process; a faster machine breaks it. Assert the final outcome and how you know who caused it. M4's CI run taught this one.
 - **Watch out:** ordering guarantees. The marker trick works because one consumer reads the stream in order; with several consumers it would need a per-consumer marker.
 
 ---
