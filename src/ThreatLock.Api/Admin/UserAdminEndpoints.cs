@@ -1,7 +1,10 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
+using ThreatLock.Api.Audit;
 using ThreatLock.Api.Events;
+using ThreatLock.Core.Audit;
+using ThreatLock.Infrastructure.Audit;
 using ThreatLock.Core.Events;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -68,7 +71,8 @@ public static class UserAdminEndpoints
     }
 
     private static async Task<Results<Created<AdminUserView>, ValidationProblem, ProblemHttpResult, ForbidHttpResult>> Create(
-        CreateUserRequest request, UserManager<AppUser> users, ThreatLockDbContext db, CurrentUser me, TimeProvider time, CancellationToken ct)
+        CreateUserRequest request, UserManager<AppUser> users, ThreatLockDbContext db, CurrentUser me, AuditLog audit, TimeProvider time,
+        CancellationToken ct)
     {
         var roles = NormaliseRoles(request.Roles);
         if (roles is null) return UnknownRoles();
@@ -91,6 +95,8 @@ public static class UserAdminEndpoints
             if (!created.Succeeded) return IdentityProblem(created);
             var assigned = await users.AddToRolesAsync(user, roles);
             if (!assigned.Succeeded) return IdentityProblem(assigned);
+            await audit.AppendAsync(db, new AuditRecord(user.OrgId, ActorTypes.Admin, me.UserId, AuditActions.UserCreated, "user", user.Id.ToString(),
+                Details: new JsonObject { ["email"] = user.Email, ["roles"] = RolesJson(roles) }), ct);
             await transaction.CommitAsync(ct);
         }
         catch (DbUpdateException ex) when (ex.IsUniqueViolation())
@@ -104,7 +110,7 @@ public static class UserAdminEndpoints
 
     /// <summary>Owner only. Replaces the user's roles.</summary>
     private static async Task<Results<Ok<AdminUserView>, NotFound, ValidationProblem, ProblemHttpResult>> SetRoles(
-        Guid id, SetRolesRequest request, UserManager<AppUser> users, ThreatLockDbContext db, CurrentUser me, CancellationToken ct)
+        Guid id, SetRolesRequest request, UserManager<AppUser> users, ThreatLockDbContext db, CurrentUser me, AuditLog audit, CancellationToken ct)
     {
         var roles = NormaliseRoles(request.Roles);
         if (roles is null) return UnknownRoles();
@@ -125,6 +131,8 @@ public static class UserAdminEndpoints
         if (!removed.Succeeded) return IdentityProblem(removed);
         var added = await users.AddToRolesAsync(user, roles.Except(current));
         if (!added.Succeeded) return IdentityProblem(added);
+        await audit.AppendAsync(db, new AuditRecord(user.OrgId, ActorTypes.Admin, me.UserId, AuditActions.RolesChanged, "user", user.Id.ToString(),
+            Details: new JsonObject { ["from"] = RolesJson(current.Order()), ["to"] = RolesJson(roles) }), ct);
         await transaction.CommitAsync(ct);
 
         return TypedResults.Ok(new AdminUserView(user.Id, user.Email!, user.DisplayName, roles, user.CreatedAt,
@@ -146,7 +154,7 @@ public static class UserAdminEndpoints
     /// this only rotated the security stamp and changed nothing for issued tokens (Break B1).
     /// </summary>
     private static async Task<Results<Ok<RevokeSessionsResponse>, NotFound>> RevokeSessions(
-        Guid id, ThreatLockDbContext db, SessionStore store, ActivityRecorder activity, CurrentUser me, CancellationToken ct)
+        Guid id, ThreatLockDbContext db, SessionStore store, ActivityRecorder activity, AuditLog audit, CurrentUser me, CancellationToken ct)
     {
         if (!await db.Users.AnyAsync(u => u.Id == id && u.OrgId == me.RequiredOrgId, ct)) return TypedResults.NotFound();
 
@@ -158,26 +166,41 @@ public static class UserAdminEndpoints
                 new JsonObject { ["reason"] = RevocationReasons.AdminManual, ["by"] = me.UserId.ToString() }, ct);
         }
 
+        await audit.AppendAsync(new AuditRecord(me.RequiredOrgId, ActorTypes.Admin, me.UserId, AuditActions.SessionsRevokedByAdmin, "user", id.ToString(),
+            Details: new JsonObject
+            {
+                ["reason"] = RevocationReasons.AdminManual,
+                ["revokedSessions"] = new JsonArray([.. revoked.Select(s => JsonValue.Create(s.ToString()))]),
+            }), ct);
         return TypedResults.Ok(new RevokeSessionsResponse(id, revoked.Count));
     }
 
     /// <summary>
     /// Clears a security lock (SPEC §10.3): password reset is out of scope, so an admin vouching
-    /// for the user is the way back in. Idempotent: unlocking an unlocked user is a no-op.
-    /// Audited from M7.
+    /// for the user is the way back in. Idempotent: unlocking an unlocked user is a no-op. The
+    /// unlock and its audit entry commit together.
     /// </summary>
-    private static async Task<Results<NoContent, NotFound>> Unlock(Guid id, ThreatLockDbContext db, CurrentUser me, CancellationToken ct)
+    private static async Task<Results<NoContent, NotFound>> Unlock(Guid id, ThreatLockDbContext db, CurrentUser me, AuditLog audit, CancellationToken ct)
     {
         var orgId = me.RequiredOrgId;
-        if (!await db.Users.AnyAsync(u => u.Id == id && u.OrgId == orgId, ct)) return TypedResults.NotFound();
+        var lockedReason = await db.Users.Where(u => u.Id == id && u.OrgId == orgId)
+            .Select(u => new { u.SecurityLockedAt, u.SecurityLockedReason }).SingleOrDefaultAsync(ct);
+        if (lockedReason is null) return TypedResults.NotFound();
+        if (lockedReason.SecurityLockedAt is null) return TypedResults.NoContent();   // nothing to unlock, nothing to audit
 
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await db.Users
             .Where(u => u.Id == id && u.OrgId == orgId)
             .ExecuteUpdateAsync(set => set
                 .SetProperty(u => u.SecurityLockedAt, (DateTimeOffset?)null)
                 .SetProperty(u => u.SecurityLockedReason, (string?)null), ct);
+        await audit.AppendAsync(db, new AuditRecord(orgId, ActorTypes.Admin, me.UserId, AuditActions.UserUnlocked, "user", id.ToString(),
+            Details: new JsonObject { ["lockedReason"] = lockedReason.SecurityLockedReason }), ct);
+        await transaction.CommitAsync(ct);
         return TypedResults.NoContent();
     }
+
+    private static JsonArray RolesJson(IEnumerable<string> roles) => new([.. roles.Select(r => JsonValue.Create(r))]);
 
     /// <summary>Validates role names and always includes "member". Null means an unknown role was sent.</summary>
     private static string[]? NormaliseRoles(string[]? requested)
