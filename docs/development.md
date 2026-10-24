@@ -112,6 +112,8 @@ In the SPA (signed in as an owner or security admin): **Anomalies** lists them w
 
 From M6 the Worker also **acts**. A responded anomaly gets a response job: the user's sessions are revoked (their next request gets `401`), and the admins get a notification. Watch the **Notifications** badge, the anomaly page's **Response** timeline, and, for security admins, **Jobs** (failed and dead jobs, with Retry). To see a lock, set the policy's response action to `revoke_and_lock`. **Wait 10 s** (the Worker's policy cache), then sign in through Tor again. The user's next login gets `403` "locked after suspicious activity" until someone presses **Unlock** on the Users screen.
 
+From M7 every security action is also written to the org's **audit log**, a hash chain (security admins: **Audit log** screen). **Verify chain** recomputes every hash. When the chain is intact it also gives you the head (seq and hash); save it somewhere outside ThreatLock and paste it back in as an anchor later. To see tampering, run `scripts/experiments/b5-audit-tamper.sh` (it edits the database directly; development only) and sign in as the owner it creates.
+
 Simulated IPs work only because Development enables `Simulation` with a dev key (ADR-0007). To poke around yourself: `GET /api/admin/anomalies` as an admin; the stream with `docker compose -f deploy/compose/docker-compose.yml exec redis redis-cli XINFO GROUPS tl:events`; events with `SELECT type, host(ip), geo->>'city' FROM activity_events ORDER BY occurred_at DESC LIMIT 10;`.
 
 The refresh cookie is `Secure`, so curl (unlike a browser) won't send it back over plain `http://127.0.0.1`. To try refresh from the command line, copy the `tl_refresh` value from the login response's `Set-Cookie` header and send it yourself:
@@ -122,7 +124,7 @@ curl -s -X POST -H "X-Requested-With: threatlock" -H "Cookie: tl_refresh=<value>
 curl -s -H "Authorization: Bearer $T" $B/api/me/sessions     # where you're signed in
 ```
 
-The Break B1 experiment is scripted: `scripts/experiments/b1-stateless-jwt.sh` (see [the report](experiments/B1-stateless-jwt.md)); `scripts/experiments/session-check-latency.py` measures what the session check costs per request. Break B4 is `scripts/experiments/b4-responder-crashes.sh`. It needs only Docker, not the running app: it runs the 100-crash test at the tag `break/b4-naive-responder` and at your commit, and prints both results ([report](experiments/B4-idempotent-responder.md)).
+The Break B1 experiment is scripted: `scripts/experiments/b1-stateless-jwt.sh` (see [the report](experiments/B1-stateless-jwt.md)); `scripts/experiments/session-check-latency.py` measures what the session check costs per request. Break B5 is `scripts/experiments/b5-audit-tamper.sh` (needs the API running; [report](experiments/B5-audit-tamper.md)). Break B4 is `scripts/experiments/b4-responder-crashes.sh`. It needs only Docker, not the running app: it runs the 100-crash test at the tag `break/b4-naive-responder` and at your commit, and prints both results ([report](experiments/B4-idempotent-responder.md)).
 
 ## Database migrations
 
@@ -208,5 +210,7 @@ To change Compose ports or credentials, copy `.env.example` to `.env` in the rep
 | A Tor login only revoked, though the policy says `revoke_and_lock` (or any policy edit "didn't apply") | The Worker reused the policy it had read in the last `Policy:CacheSeconds` (10 s). The anomaly page shows which policy version judged it | Wait 10 s after a policy edit. Tests set `Policy:CacheSeconds=0` |
 | Worker logs `Could not claim response jobs` with `relation "response_jobs" does not exist` | The Worker started before the API applied the migrations | Harmless: it keeps retrying and recovers once the API has migrated |
 | A user can't sign in: `403` "locked after suspicious activity" | A `revoke_and_lock` response locked the account | An owner or security admin presses **Unlock** on the Users screen |
+| `audit_log is append-only: UPDATE is not allowed` (or DELETE, TRUNCATE) | A trigger blocks changes to the audit log for every role, on purpose (SPEC §11.3) | Don't change audit entries. To reset a development database, drop and recreate it (`docker compose ... down -v`) |
+| Audit verify says `hash_mismatch` on a database nobody touched | Something changed the canonical form, or details hold a number format `jsonb` rewrites (e.g. `1e2`) | Never change `AuditChain.Canonical` for existing rows; keep details to strings, integers, booleans, arrays and objects |
 | Experiment script says `Python was not found` | On Windows, `python3` can be a Microsoft Store stub | The scripts detect this and fall back to `python` |
 | Worker fails at startup: `ConnectionStrings:Postgres is required` | Running with environment `Production`, so dev settings weren't loaded | Use `dotnet run` (it reads `launchSettings.json`, which sets `DOTNET_ENVIRONMENT=Development`) |

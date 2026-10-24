@@ -28,3 +28,10 @@ The audit log is evidence. If an attacker (or an insider with database access) c
 - Detects edits and deletions in the middle of the chain. Does **not** detect a rewrite of everything after the edit point unless anchors exist. The docs must say so.
 - Canonical serialisation must never change for existing entries; if it must, add a `hash_version` column.
 - Appends per org are serialised. At audit-log volumes this doesn't matter.
+
+## Implementation notes (M7, 2026-10-24)
+
+- Until M10 separates database roles, the app connects as the table owner, so "INSERT and SELECT only" is enforced by a **trigger** that refuses UPDATE, DELETE and TRUNCATE for every role. The migration also grants `SELECT, INSERT` to `threatlock_app` if that role exists.
+- **Anchoring** shipped in a manual form: verify returns the head, and accepts a saved `(seq, hash)` to check against. Automatic publishing stays a stretch goal.
+- `verify` reports `chain_break` and `anchor_mismatch` as well as `hash_mismatch` and `seq_gap` (SPEC §11.4).
+- Measured in [Break B5](../experiments/B5-audit-tamper.md).

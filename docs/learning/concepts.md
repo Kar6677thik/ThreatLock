@@ -237,6 +237,22 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **Why:** two writers appending to the same org's chain at once would both read the same head and fork the chain. The lock makes them take turns. In M6, two response jobs about the same user both looking for "an unread notification to group into" would both find none and both insert; a lock keyed on the user (`hashtextextended('notify:' || user_id, 0)`) serialises them.
 - **When:** M6 (notification grouping), M7 (audit chain).
 
+### 5.3 Canonical serialisation
+
+- **What:** one agreed byte representation of a record, so the same meaning always hashes the same. Three traps, all hit while building M7:
+  - **Ambiguous boundaries:** `"ab"+"c"` and `"a"+"bc"` concatenate to the same bytes. Length prefixes (`action=2:ab`) fix it, and null needs its own marker (`~`), or it hashes like `""`.
+  - **Storage that rewrites what you gave it:** PostgreSQL `jsonb` reorders keys and drops whitespace, so canonical JSON sorts keys at every level. A mutation test showed it: without the sort, verify failed on chains nobody had touched.
+  - **Precision:** .NET timestamps have 100 ns ticks, PostgreSQL keeps microseconds; hash the stored precision.
+- **Why:** a hash chain is only as good as its canonical form. If the verifier can't reproduce the appender's bytes, every chain looks tampered, and people learn to ignore the alarm.
+- **When:** M7.
+- **Watch out:** never change the canonical form for existing rows. Version it instead (`hash_version`).
+
+### 5.4 Prevent vs detect
+
+- **What:** permissions and triggers *prevent* changes by everyone below a certain privilege. Hashes *detect* changes by everyone above it, such as a database superuser who can switch triggers off. Anchors (a head hash kept outside the system) detect the last gap: a rewrite of everything after the edit, or a truncated tail.
+- **Why:** Break B5. The trigger refused even the superuser's plain `UPDATE`. With triggers off for one session the edit went through and the row looked normal, but verify named `seq 3`. Deleting the newest entry fooled the chain and not the anchor.
+- **When:** M7; real role separation (`threatlock_app` with only `INSERT, SELECT`) in M10.
+
 ---
 
 ## Part 6. Measuring
