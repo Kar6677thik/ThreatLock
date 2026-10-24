@@ -95,4 +95,24 @@ describe('App', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('You were signed out')
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
   })
+
+  it('shows admin screens only to admins', async () => {
+    stubApi({ '/api/auth/refresh': () => json({ accessToken: 't', expiresAt: '2030-01-01T00:00:00Z', user: { ...user, roles: ['member'] } }), '/api/notes': () => json([]) })
+
+    render(<App />)
+
+    expect(await screen.findByRole('link', { name: 'Notes' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Anomalies' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Policy' })).not.toBeInTheDocument()
+  })
+
+  it('shows owners the anomalies, users and policy screens', async () => {
+    stubApi({ '/api/auth/refresh': loginOk, '/api/notes': () => json([]) })
+
+    render(<App />)
+
+    for (const name of ['Anomalies', 'Users', 'Policy']) {
+      expect(await screen.findByRole('link', { name })).toBeInTheDocument()
+    }
+  })
 })

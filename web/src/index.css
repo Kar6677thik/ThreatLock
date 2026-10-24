@@ -70,3 +70,58 @@ td {
   text-align: left;
   padding: 0.25rem 0.75rem 0.25rem 0;
 }
+
+nav a {
+  text-decoration: none;
+}
+
+nav a.active {
+  font-weight: bold;
+  text-decoration: underline;
+}
+
+.wide {
+  max-width: none;
+}
+
+fieldset {
+  border: 1px solid #8884;
+  padding: 0.5rem 1rem;
+}
+
+label.inline {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-right: 1rem;
+}
+
+label.inline input {
+  width: 6rem;
+}
+
+dl.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+}
+
+dl.facts dd {
+  margin: 0;
+}
+
+pre.evidence {
+  padding: 0.75rem;
+  overflow-x: auto;
+  border: 1px solid #8884;
+}
+
+.severity-high,
+.severity-critical {
+  color: #c62828;
+  font-weight: bold;
+}
+
+footer {
+  margin-top: 3rem;
+  opacity: 0.7;
+}
