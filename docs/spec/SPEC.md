@@ -343,7 +343,7 @@ The SPA generates a UUID `deviceId` on first load, stores it in `localStorage`, 
 
 Every event carries: `id` (UUIDv7), `org_id`, `user_id`, `session_id` (nullable for failed logins), `type`, `occurred_at` (server clock when the request was received), `ip`, `geo` (country, city, lat, lon, accuracy radius, ASN if available), `device_id`, `user_agent`, `request_id`, `metadata` (JSON, e.g. `{ "noteCount": 120, "simulated": true }`).
 
-`login_failed` for an unknown email is recorded with `user_id = null` and is **not** used by user-scoped detectors (prevents log-flooding someone else's baseline).
+`login_failed` is recorded only for **known** users (wrong password, locked out), with `session_id = null`. A failed login for an unknown email is **not** recorded: it belongs to no org, and events are per tenant. (Changed in M4; originally `user_id = null`. Guessing across unknown emails is a rate-limiting concern, not a per-tenant detection.)
 
 ### 7.2 Capture and delivery (at-least-once)
 
@@ -356,11 +356,12 @@ This is a lightweight transactional-outbox: the event table *is* the outbox. Eve
 
 ### 7.3 Consumption
 
-- Consumer group `detectors` on `tl:events`; one consumer per Worker process (name = pod name).
-- Read with `XREADGROUP ... BLOCK 1000 COUNT 100`.
+- Consumer group `detectors` on `tl:events`, created at position `0` so events written before the Worker's first start are still processed; one consumer per Worker process (name = pod name, `Events:ConsumerName`).
+- On start, the consumer first re-reads **its own** pending entries (`XREADGROUP ... 0`), left over if it crashed, then switches to new messages (`>`).
+- Read with `XREADGROUP ... COUNT 100`, **polling every 100 ms when idle** rather than `BLOCK`: StackExchange.Redis multiplexes one connection for all commands and doesn't support blocking reads. The poll interval is part of the detection-latency budget (§16.2).
 - After an event is fully processed (all detectors ran, anomalies persisted), `XACK`.
-- On startup and every 30 s, `XAUTOCLAIM` messages idle > 60 s, so a crashed consumer's messages get processed.
-- A message delivered more than 5 times is moved to `tl:events:dead` and counted in a metric. The admin UI shows the dead-letter count.
+- Every 30 s, list pending messages (`XPENDING`); those idle > 60 s are claimed (`XCLAIM`) and processed, so a crashed consumer's messages aren't stuck. A failed message is simply not acknowledged, so it goes through the same path.
+- A message delivered 5 times without success is copied to `tl:events:dead` (with its delivery count) and then acknowledged. Copy-then-ack means a crash in between leaves a duplicate in the dead-letter stream, never a lost message. A dead-letter metric and admin UI count arrive with observability (M9).
 
 ### 7.4 Retention
 
@@ -416,7 +417,7 @@ Defaults below are starting points; each is overridable per org ([§9](#9-decisi
 | | |
 | --- | --- |
 | Signal | Two **successful** authenticated events for the same user whose implied speed exceeds a threshold |
-| Maths | Haversine distance between geolocated IPs ÷ time between events. Subtract both IPs' accuracy radii from the distance first (GeoIP is imprecise). |
+| Maths | Haversine distance between geolocated IPs ÷ time between events. Subtract both IPs' accuracy radii from the distance first (GeoIP is imprecise). DB-IP Lite records carry no accuracy radius, so `GeoIp:DefaultAccuracyKm` (50 km) is used for both points. |
 | Defaults | `maxSpeedKmh = 900` (airliner), `minDistanceKm = 500` (ignore same-region noise), compare against the user's last known location in the past 24 h |
 | Ignore | IPs in the org's `trustedNetworks` (corporate VPN egress), private/unknown-geo IPs |
 | Severity | Medium (High if the new IP is also on D1's list) |
@@ -459,8 +460,8 @@ Defaults below are starting points; each is overridable per org ([§9](#9-decisi
 
 For each signal, the Worker:
 
-1. `INSERT INTO anomalies (...) ON CONFLICT (org_id, dedupe_key) DO NOTHING RETURNING id`. If nothing returned, this is a duplicate (redelivered event or repeated behaviour) → append the event id to the existing anomaly's evidence and stop.
-2. Otherwise run the decision ([§9](#9-decision-framework)) **in the same transaction**, and if the decision is `responded`, insert the response job in the same transaction too. Either all three rows exist or none do.
+1. `INSERT INTO anomalies (...) ON CONFLICT (org_id, dedupe_key) DO UPDATE SET event_ids = <append the event id unless already present> RETURNING id, (xmax = 0) AS created`. `created = false` means a duplicate (redelivered event or repeated behaviour): the event id has been recorded on the existing anomaly, and processing stops. One statement, no read-then-write race.
+2. Otherwise (from M5) run the decision ([§9](#9-decision-framework)) **in the same transaction**, and if the decision is `responded`, insert the response job in the same transaction too. Either all three rows exist or none do.
 
 ---
 

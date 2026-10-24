@@ -21,3 +21,4 @@ Use **DB-IP IP to City Lite** in `.mmdb` format, read with the `MaxMind.Db` libr
 
 - Lite databases are city-level and often wrong by hundreds of kilometres, which is why D2 subtracts accuracy radii and ignores short distances.
 - The database should be refreshed monthly; the pipeline pulls the latest one at image build time.
+- Found in M4: DB-IP Lite records have **no accuracy radius**. We assume 50 km (`GeoIp:DefaultAccuracyKm`) for every point, so D2 subtracts 100 km from every distance.

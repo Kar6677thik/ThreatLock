@@ -36,6 +36,10 @@ ThreatLock/
 ## Run everything
 
 ```bash
+# 0. GeoIP database, ~120 MB, git-ignored (first time, then monthly). Optional: without it
+#    locations are "unknown" and impossible travel never fires.
+scripts/download-geoip.sh
+
 # 1. Dependencies (PostgreSQL on 127.0.0.1:5433, Redis on 127.0.0.1:6379)
 docker compose -f deploy/compose/docker-compose.yml up -d --wait
 
@@ -88,6 +92,23 @@ curl -s -H "Authorization: Bearer $T" -H "$J" -d '{"email":"ben@acme.test","disp
 # Peek inside the token (it's signed, not encrypted: never put secrets in it).
 echo $T | cut -d. -f2 | python -c "import sys,base64;s=sys.stdin.read().strip();print(base64.urlsafe_b64decode(s+'='*(-len(s)%4)).decode())"
 ```
+
+### Watch detection work
+
+With the API and the Worker running (the Worker downloads the live Tor exit list at startup):
+
+```bash
+scripts/experiments/m4-detection-smoke.sh
+```
+
+It signs in from a simulated Indian IP, uses the session from a UK IP, then signs in through a real Tor exit, and prints the anomalies the Worker created, e.g.:
+
+```
+  impossible_travel  medium  events=1  Bengaluru, IN -> London, GB: 7933 km in 0.0 s  simulated=True
+  tor                high    events=2  171.25.193.25 (SE) on login_succeeded  simulated=True
+```
+
+Simulated IPs work only because Development enables `Simulation` with a dev key (ADR-0007). To poke around yourself: `GET /api/admin/anomalies` as an admin; the stream with `docker compose -f deploy/compose/docker-compose.yml exec redis redis-cli XINFO GROUPS tl:events`; events with `SELECT type, host(ip), geo->>'city' FROM activity_events ORDER BY occurred_at DESC LIMIT 10;`.
 
 The refresh cookie is `Secure`, so curl (unlike a browser) won't send it back over plain `http://127.0.0.1`. To try refresh from the command line, copy the `tl_refresh` value from the login response's `Set-Cookie` header and send it yourself:
 
@@ -146,6 +167,13 @@ Settings come from `appsettings.json`, then `appsettings.{Environment}.json`, th
 | `Auth:SessionAbsoluteTimeout` | `7.00:00:00` | A session dies this long after login, however active |
 | `Auth:RefreshReuseGrace` | `00:00:05` | Second use of a refresh token within this window → `409` (race); later → session revoked (theft) |
 | `Auth:RefreshCookieSecure` | `true` | Browsers accept `Secure` cookies on `http://localhost`, so it stays on in development |
+| `Simulation:Enabled`, `Simulation:Key` | `true`, a dev key | Lets requests with `X-Simulator-Key` choose their client IP via `X-Simulated-Client-Ip` (ADR-0007). **Must be off** anywhere reachable from the internet |
+| `GeoIp:DatabasePath` | `../../data/geoip/dbip-city-lite.mmdb` | Relative to the app's content root. Missing file → warning, locations unknown |
+| `GeoIp:DefaultAccuracyKm` | `50` | DB-IP Lite has no accuracy radius, so this is assumed for every point |
+| `Events:StreamName`, `Events:ConsumerGroup`, `Events:ConsumerName` | `tl:events`, `detectors`, machine name | Redis stream wiring (Worker and API must agree on the stream) |
+| `Events:MaxDeliveries`, `Events:ClaimIdle`, `Events:ClaimInterval` | `5`, `00:01:00`, `00:00:30` | When a pending message is reclaimed, and when it's dead-lettered |
+| `Events:SweepInterval`, `Events:SweepMinAge`, `Events:RetentionDays` | `00:00:05`, `00:00:05`, `30` | Outbox sweeper and the activity-event purge |
+| `Tor:ListUrl`, `Tor:ListPath`, `Tor:RefreshInterval` | Tor Project URL, none, `01:00:00` | Set `ListPath` to a local file to work offline |
 | `Network:KnownProxies`, `Network:KnownNetworks` | empty | Proxies allowed to set `X-Forwarded-For` (IPs, CIDRs). Empty = trust nobody, use the TCP peer address (ADR-0007) |
 | `Auth:Issuer`, `Auth:Audience` | `threatlock`, `threatlock-api` | Checked on every token |
 | `Demo:AllowSignup` | `true` | Enables `POST /api/auth/register-org`; `false` returns 404 |
@@ -167,5 +195,8 @@ To change Compose ports or credentials, copy `.env.example` to `.env` in the rep
 | Signed out after every page reload | The `Secure` refresh cookie isn't being stored or sent back | Open the SPA at `http://localhost:5173` (the setup verified in M3); browsers accept `Secure` cookies over plain http only on hosts they consider secure contexts, such as `localhost`. Don't open the API port directly |
 | `401` with `error_description="session_revoked"` | The token is fine but its session was logged out, revoked or idle-expired | Sign in again (the SPA does this for you) |
 | `503` on every authenticated request | The session check can reach neither Redis nor PostgreSQL, so it fails closed | Start the databases: `docker compose ... up -d` |
+| API logs `GeoIP database not found` | `data/geoip/dbip-city-lite.mmdb` is missing | `scripts/download-geoip.sh` (the app works without it; impossible travel just never fires) |
+| Worker logs `Restored N Tor exit addresses from the snapshot` | The Tor list download failed (offline?) and the last saved copy is in use | Fine for development; or set `Tor:ListPath` to a local file |
+| No anomalies appear | The Worker isn't running, or the API and Worker use different `Events:StreamName` | Start the Worker; check `XINFO GROUPS tl:events` shows `lag 0` |
 | Experiment script says `Python was not found` | On Windows, `python3` can be a Microsoft Store stub | The scripts detect this and fall back to `python` |
 | Worker fails at startup: `ConnectionStrings:Postgres is required` | Running with environment `Production`, so dev settings weren't loaded | Use `dotnet run` (it reads `launchSettings.json`, which sets `DOTNET_ENVIRONMENT=Development`) |
