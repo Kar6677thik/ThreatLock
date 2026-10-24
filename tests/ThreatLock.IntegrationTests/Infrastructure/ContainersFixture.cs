@@ -74,6 +74,8 @@ public sealed class ContainersFixture : IAsyncLifetime
             ["Events:ConsumerName"] = $"test-worker-{Guid.NewGuid():N}",
             ["Events:SweepInterval"] = "00:00:00.200",
             ["Events:SweepMinAge"] = "00:00:00",
+            // No policy caching: a test that edits the policy sees it applied to the very next event.
+            ["Policy:CacheSeconds"] = "0",
             ["Logging:LogLevel:Default"] = "Warning",
         };
         foreach (var (key, value) in overrides ?? new Dictionary<string, string?>()) settings[key] = value;
