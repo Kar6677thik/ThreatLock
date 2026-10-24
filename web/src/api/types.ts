@@ -47,7 +47,7 @@ export interface SessionView {
   current: boolean
 }
 
-// ---- Admin (M4–M5) ----
+// ---- Admin (M4–M6) ----
 
 export type DetectorMode = 'off' | 'observe' | 'notify' | 'respond'
 export type Severity = 'low' | 'medium' | 'high' | 'critical'
@@ -67,6 +67,45 @@ export interface AnomalyView {
   decision: Decision | null
   decisionReason: string | null
   policyVersion: number | null
+  respondedAt?: string | null
+  /** Only on the detail endpoint: the response job, if the decision needed one (M6). */
+  response?: ResponseJobView | null
+  revokedSessions?: number
+}
+
+export type JobStatus = 'pending' | 'running' | 'succeeded' | 'dead'
+
+export interface ResponseJobView {
+  id: string
+  anomalyId: string
+  userId: string
+  action: 'notify' | 'revoke_sessions' | 'revoke_and_lock'
+  status: JobStatus
+  attempts: number
+  lastError: string | null
+  createdAt: string
+  nextAttemptAt: string
+  revokedAt: string | null
+  notifiedAt: string | null
+  finishedAt: string | null
+}
+
+export interface NotificationView {
+  id: string
+  title: string
+  anomalyId: string
+  lastAnomalyId: string
+  subjectUserId: string
+  /** Anomalies about the same user grouped into this one entry. */
+  count: number
+  createdAt: string
+  updatedAt: string
+  readAt: string | null
+}
+
+export interface Inbox {
+  unread: number
+  items: NotificationView[]
 }
 
 export interface DetectorPolicy {
@@ -103,6 +142,8 @@ export interface AdminUserView {
   displayName: string
   roles: string[]
   createdAt: string
+  securityLockedAt?: string | null
+  securityLockedReason?: string | null
 }
 
 export const ROLES = ['member', 'admin', 'security_admin', 'owner'] as const

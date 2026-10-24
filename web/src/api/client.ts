@@ -10,6 +10,8 @@ export interface Problem {
   detail?: string
   status?: number
   errors?: Record<string, string[]>
+  /** A machine-readable reason, e.g. "account_locked" on a 403 from login. */
+  code?: string
 }
 
 export class ApiError extends Error {
