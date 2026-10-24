@@ -12,6 +12,7 @@ using ThreatLock.Infrastructure.Events;
 using ThreatLock.Infrastructure.Geo;
 using ThreatLock.Infrastructure.HealthChecks;
 using ThreatLock.Infrastructure.Persistence;
+using ThreatLock.Infrastructure.Policy;
 using ThreatLock.Infrastructure.Sessions;
 
 namespace ThreatLock.Infrastructure;
@@ -76,6 +77,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITorExitList, RedisTorExitList>();
         services.AddSingleton<IDetectorState, RedisDetectorState>();
         services.AddSingleton<AnomalyStore>();
+
+        // Per-org policy (SPEC §9).
+        services.AddOptions<PolicyOptions>().BindConfiguration(PolicyOptions.SectionName);
+        services.AddSingleton<PolicyStore>();
 
         // GeoIP (ADR-0009). Without the database file every lookup is "unknown": the app still
         // works, impossible travel just never fires. A warning is logged at startup.

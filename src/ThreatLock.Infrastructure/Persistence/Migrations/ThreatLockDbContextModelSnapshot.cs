@@ -552,6 +552,35 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                     b.ToTable("orgs", (string)null);
                 });
 
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.OrgPolicy", b =>
+                {
+                    b.Property<Guid>("OrgId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("org_id");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.Property<string>("Document")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("document");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("OrgId", "Version")
+                        .HasName("pk_org_policies");
+
+                    b.ToTable("org_policies", (string)null);
+                });
+
             modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -785,6 +814,16 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_notes_users_owner_id");
+                });
+
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.OrgPolicy", b =>
+                {
+                    b.HasOne("ThreatLock.Infrastructure.Persistence.Org", null)
+                        .WithMany()
+                        .HasForeignKey("OrgId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_org_policies_orgs_org_id");
                 });
 
             modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.RefreshToken", b =>

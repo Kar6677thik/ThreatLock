@@ -138,3 +138,16 @@ public sealed class TorExitSnapshot
     public required string Source { get; init; }
     public System.Net.IPAddress[] Ips { get; init; } = [];
 }
+
+/// <summary>
+/// One version of an org's security policy (SPEC §9.1). Never updated in place: an edit inserts
+/// version N+1, so the history of who changed what, and which version judged each anomaly, stays.
+/// </summary>
+public sealed class OrgPolicy
+{
+    public Guid OrgId { get; init; }
+    public int Version { get; init; }
+    public required string Document { get; init; }   // jsonb
+    public Guid? UpdatedBy { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
+}
