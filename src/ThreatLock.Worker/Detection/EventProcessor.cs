@@ -1,6 +1,7 @@
 using ThreatLock.Core.Detection;
 using ThreatLock.Core.Events;
 using ThreatLock.Core.Policy;
+using ThreatLock.Core.Response;
 using ThreatLock.Infrastructure.Detection;
 using ThreatLock.Infrastructure.Policy;
 
@@ -10,7 +11,7 @@ namespace ThreatLock.Worker.Detection;
 /// Runs the detectors over one event, judges each signal with the org's policy, and stores the
 /// anomaly together with its decision (SPEC §8–9). Idempotent: the same event processed twice
 /// yields the same anomalies, because signals de-duplicate on their key and an anomaly's decision
-/// is written only when it's created.
+/// is written only when it's created (and so is its response job, M6).
 /// </summary>
 public sealed partial class EventProcessor(
     IEnumerable<IDetector> detectors,
@@ -38,7 +39,9 @@ public sealed partial class EventProcessor(
                 roles ??= await policies.GetUserRolesAsync(signal.UserId, ct);
                 var decision = PolicyEvaluator.Decide(signal, policy.Policy, roles);
 
-                var result = await anomalies.UpsertAsync(signal, decision, policy.Version, ct);
+                // "notified" and "responded" need work done; the job commits together with the anomaly.
+                var plan = ResponsePlanner.Plan(decision, signal.Severity, policy.Policy);
+                var result = await anomalies.UpsertAsync(signal, decision, policy.Version, plan, ct);
                 if (!result.Created) continue;
 
                 created++;

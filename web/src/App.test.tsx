@@ -44,6 +44,19 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid email or password.')
   })
 
+  it('explains a security lock instead of "wrong password"', async () => {
+    const detail = 'Your account was locked after suspicious activity. Ask an administrator to unlock it.'
+    stubApi({
+      '/api/auth/refresh': () => unauthorized(),
+      '/api/auth/login': () => json({ status: 403, detail, code: 'account_locked' }, 403),
+    })
+    render(<App />)
+
+    await signIn()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('locked after suspicious activity')
+  })
+
   it('restores the session from the refresh cookie on page load', async () => {
     const fetchMock = stubApi({
       '/api/auth/refresh': loginOk,
@@ -111,8 +124,20 @@ describe('App', () => {
 
     render(<App />)
 
-    for (const name of ['Anomalies', 'Users', 'Policy']) {
+    for (const name of ['Anomalies', 'Users', 'Policy', 'Jobs']) {
       expect(await screen.findByRole('link', { name })).toBeInTheDocument()
     }
+  })
+
+  it('shows admins how many notifications are unread', async () => {
+    stubApi({
+      '/api/auth/refresh': loginOk,
+      '/api/notes': () => json([]),
+      '/api/admin/notifications?unreadOnly=true': () => json({ unread: 3, items: [] }),
+    })
+
+    render(<App />)
+
+    expect(await screen.findByLabelText('3 unread')).toHaveTextContent('3')
   })
 })

@@ -7,7 +7,7 @@ Each Break/Prove experiment from [spec §15](../spec/SPEC.md#15-break-and-prove-
 | B1 | Stateless JWT keeps working after revocation | [B1-stateless-jwt.md](B1-stateless-jwt.md) (complete) |
 | B2 | Replayed cookie from another country | *not run* |
 | B3 | VPN user flagged as impossible travel | *not run* |
-| B4 | Duplicate notifications from a non-idempotent responder | *not run* |
+| B4 | Duplicate notifications from a non-idempotent responder | [B4-idempotent-responder.md](B4-idempotent-responder.md) (complete) |
 | B5 | Tampered audit entry | *not run* |
 | Eval | False-positive rate, recall, p95 time to revoke | *not run* |
 

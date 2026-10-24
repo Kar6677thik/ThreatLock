@@ -4,7 +4,7 @@ import { ROLES, type AdminUserView } from '../../api/types'
 import { isOwner, isSecurityAdmin } from '../../auth/roles'
 import { useAuth } from '../../auth/useAuth'
 
-/** The org's users: add people, and (security admins) sign someone out everywhere. */
+/** The org's users: add people; security admins can sign someone out everywhere and unlock locked accounts. */
 export function UsersPage() {
   const { call, session } = useAuth()
   const [users, setUsers] = useState<AdminUserView[]>([])
@@ -37,6 +37,12 @@ export function UsersPage() {
     setMessages([`Signed ${user.displayName} out of ${result.revokedSessions} session(s).`])
   }
 
+  async function unlock(user: AdminUserView) {
+    await call(`/api/admin/users/${user.id}/unlock`, { method: 'POST' })
+    setMessages([`Unlocked ${user.displayName}. They can sign in again.`])
+    await load()
+  }
+
   return (
     <section>
       <h2>Users</h2>
@@ -46,6 +52,7 @@ export function UsersPage() {
             <th>Name</th>
             <th>Email</th>
             <th>Roles</th>
+            <th>Status</th>
             <th />
           </tr>
         </thead>
@@ -56,9 +63,23 @@ export function UsersPage() {
               <td>{u.email}</td>
               <td>{u.roles.join(', ')}</td>
               <td>
+                {u.securityLockedAt ? (
+                  <span className="locked" title={`Locked ${new Date(u.securityLockedAt).toLocaleString()}`}>
+                    Locked ({u.securityLockedReason})
+                  </span>
+                ) : (
+                  'Active'
+                )}
+              </td>
+              <td className="row">
                 {isSecurityAdmin(me) && (
                   <button type="button" onClick={() => void revoke(u)}>
                     Sign out everywhere
+                  </button>
+                )}
+                {isSecurityAdmin(me) && u.securityLockedAt && (
+                  <button type="button" onClick={() => void unlock(u)}>
+                    Unlock
                   </button>
                 )}
               </td>

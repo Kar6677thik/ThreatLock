@@ -125,13 +125,22 @@ public sealed partial class SessionStore(
             }
         }
 
-        foreach (var (sid, absoluteExpiresAt) in revoked)
+        await MarkRevokedAsync(revoked);
+        return [.. revoked.Select(r => r.Id)];
+    }
+
+    /// <summary>
+    /// Writes <c>r</c> into the Redis cache for sessions already revoked in PostgreSQL, so a cached
+    /// <c>a</c> can't keep them alive for up to 60 s. Best effort and idempotent: writing the same
+    /// value twice is harmless, which is why the response orchestrator can simply repeat it.
+    /// </summary>
+    public async Task MarkRevokedAsync(IEnumerable<(Guid Id, DateTimeOffset AbsoluteExpiresAt)> sessions)
+    {
+        foreach (var (sid, absoluteExpiresAt) in sessions)
         {
             var written = await TryRedisAsync(() => redis.GetDatabase().StringSetAsync(StatusKey(sid), Revoked, RevokedTtl(absoluteExpiresAt)));
             if (written != true) LogCacheWriteFailed(sid);
         }
-
-        return [.. revoked.Select(r => r.Id)];
     }
 
     // Keep "revoked" cached until the session would have expired anyway; after that, a cache miss

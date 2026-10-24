@@ -25,6 +25,15 @@ public sealed class AppUser : IdentityUser<Guid>
     public Org? Org { get; set; }
     public required string DisplayName { get; set; }
     public DateTimeOffset CreatedAt { get; init; }
+
+    /// <summary>
+    /// Set by a <c>revoke_and_lock</c> response (SPEC §10.3): login is refused until an admin
+    /// unlocks. Separate from Identity's own lockout, which is about wrong passwords and expires.
+    /// </summary>
+    public DateTimeOffset? SecurityLockedAt { get; set; }
+
+    /// <summary>Why: the detector that triggered the lock, e.g. "tor".</summary>
+    public string? SecurityLockedReason { get; set; }
 }
 
 public sealed class AppRole : IdentityRole<Guid>
@@ -70,6 +79,9 @@ public sealed class Session
     public DateTimeOffset AbsoluteExpiresAt { get; init; }
     public DateTimeOffset? RevokedAt { get; set; }
     public string? RevokedReason { get; set; }
+
+    /// <summary>The anomaly whose response revoked this session, if any (M6).</summary>
+    public Guid? RevokedByAnomalyId { get; set; }
 }
 
 /// <summary>
@@ -128,6 +140,9 @@ public sealed class Anomaly
     public int? PolicyVersion { get; set; }
     public string? Decision { get; set; }
     public string? DecisionReason { get; set; }
+
+    /// <summary>When the response job finished revoking (M6). Stops the "time to revoke" clock.</summary>
+    public DateTimeOffset? RespondedAt { get; set; }
 }
 
 /// <summary>The last Tor exit list fetched, so a restart without internet still has one (SPEC §8.2 D1).</summary>
@@ -150,4 +165,64 @@ public sealed class OrgPolicy
     public required string Document { get; init; }   // jsonb
     public Guid? UpdatedBy { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
+}
+
+/// <summary>
+/// The work of responding to one anomaly (SPEC §10). Created in the same transaction as the
+/// anomaly, so a crash can never leave a "responded" anomaly with nobody acting on it, and
+/// <c>UNIQUE (anomaly_id)</c> means there is never a second job for it. Claimed with
+/// <c>FOR UPDATE SKIP LOCKED</c>; <see cref="LockedUntil"/> is the lease.
+/// </summary>
+public sealed class ResponseJob
+{
+    public Guid Id { get; init; } = Guid.CreateVersion7();
+    public Guid AnomalyId { get; init; }
+    public Guid OrgId { get; init; }
+    public Guid UserId { get; init; }
+
+    /// <summary>Only sessions created at or before this are revoked: the anomaly's detection time.</summary>
+    public DateTimeOffset Cutoff { get; init; }
+
+    public required string Action { get; init; }
+    public string[] NotifyRoles { get; init; } = [];
+    public required string Status { get; set; }
+    public int Attempts { get; set; }
+    public DateTimeOffset NextAttemptAt { get; set; }
+    public DateTimeOffset? LockedUntil { get; set; }
+    public string? LastError { get; set; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset? FinishedAt { get; set; }
+
+    /// <summary>
+    /// Step markers. Each is set in the same transaction as the step's effect, so "done" and
+    /// "recorded as done" can't disagree: a retry skips a step whose marker is set.
+    /// </summary>
+    public DateTimeOffset? RevokedAt { get; set; }
+
+    public DateTimeOffset? NotifiedAt { get; set; }
+}
+
+/// <summary>
+/// An entry in an admin's in-app inbox (SPEC §10.4). Repeated anomalies about the same user
+/// within an hour are grouped into one unread entry (<see cref="Count"/>, <see cref="LastAnomalyId"/>),
+/// so an attack loop doesn't bury the admins.
+/// </summary>
+public sealed class Notification
+{
+    public Guid Id { get; init; } = Guid.CreateVersion7();
+    public Guid OrgId { get; init; }
+    public Guid RecipientUserId { get; init; }
+
+    /// <summary>The user the anomalies are about: the grouping key, with the recipient.</summary>
+    public Guid SubjectUserId { get; init; }
+
+    /// <summary>The anomaly that opened this entry. <c>UNIQUE (anomaly_id, recipient_user_id)</c>.</summary>
+    public Guid AnomalyId { get; init; }
+
+    public Guid LastAnomalyId { get; set; }
+    public int Count { get; set; } = 1;
+    public required string Title { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset? ReadAt { get; set; }
 }

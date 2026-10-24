@@ -34,6 +34,9 @@ public static class AuthEndpoints
 {
     private const string InvalidCredentials = "Invalid email or password.";
 
+    /// <summary>Problem-details <c>code</c> the SPA uses to show the "locked" message.</summary>
+    public const string AccountLockedCode = "account_locked";
+
     public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
         var auth = app.MapGroup("/api/auth").WithTags("Auth");
@@ -162,6 +165,18 @@ public static class AuthEndpoints
         }
 
         await users.ResetAccessFailedCountAsync(user);
+
+        // Locked by a security response (SPEC §10.3). Checked only *after* the password: someone
+        // without the password learns nothing, but the real user gets a clear, actionable answer
+        // instead of a "wrong password" they'd keep retrying.
+        if (user.SecurityLockedAt is not null)
+        {
+            await activity.RecordAsync(EventTypes.LoginFailed, user.OrgId, user.Id, null, new JsonObject { ["reason"] = "security_locked" }, ct);
+            return TypedResults.Problem(
+                "Your account was locked after suspicious activity. Ask an administrator to unlock it.",
+                statusCode: StatusCodes.Status403Forbidden,
+                extensions: new Dictionary<string, object?> { ["code"] = AccountLockedCode });
+        }
 
         var roles = (await users.GetRolesAsync(user)).ToArray();
         var tokens = await sessions.StartAsync(user, roles, ClientInfo.From(http), ct);

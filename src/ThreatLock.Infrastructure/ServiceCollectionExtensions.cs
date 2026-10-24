@@ -13,6 +13,7 @@ using ThreatLock.Infrastructure.Geo;
 using ThreatLock.Infrastructure.HealthChecks;
 using ThreatLock.Infrastructure.Persistence;
 using ThreatLock.Infrastructure.Policy;
+using ThreatLock.Infrastructure.Response;
 using ThreatLock.Infrastructure.Sessions;
 
 namespace ThreatLock.Infrastructure;
@@ -81,6 +82,12 @@ public static class ServiceCollectionExtensions
         // Per-org policy (SPEC §9).
         services.AddOptions<PolicyOptions>().BindConfiguration(PolicyOptions.SectionName);
         services.AddSingleton<PolicyStore>();
+
+        // Response orchestrator (SPEC §10): the job queue and the steps it runs.
+        services.AddOptions<ResponseOptions>().BindConfiguration(ResponseOptions.SectionName);
+        services.AddSingleton<ResponseJobStore>();
+        services.AddSingleton<ResponseExecutor>();
+        services.TryAddSingleton<IResponseFaultInjector, NoFaults>();
 
         // GeoIP (ADR-0009). Without the database file every lookup is "unknown": the app still
         // works, impossible travel just never fires. A warning is logged at startup.

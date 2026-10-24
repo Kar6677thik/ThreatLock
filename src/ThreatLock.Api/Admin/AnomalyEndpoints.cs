@@ -19,11 +19,14 @@ public sealed record AnomalyView(
     JsonElement Evidence,
     string? Decision,
     string? DecisionReason,
-    int? PolicyVersion);
+    int? PolicyVersion,
+    DateTimeOffset? RespondedAt = null,
+    ResponseJobView? Response = null,
+    int RevokedSessions = 0);
 
 /// <summary>
-/// Read-only view of anomalies for admins (SPEC §13). The admin UI and decisions arrive in M5;
-/// M4 exposes the data so detections can be inspected end to end.
+/// Read-only view of anomalies for admins (SPEC §13). The detail adds the response timeline:
+/// the job, its steps and how many sessions it revoked (M6).
 /// </summary>
 public static class AnomalyEndpoints
 {
@@ -57,13 +60,21 @@ public static class AnomalyEndpoints
             .Where(a => a.Id == id && a.OrgId == orgId)
             .Select(a => new { Anomaly = a, UserName = db.Users.Where(u => u.Id == a.UserId).Select(u => u.DisplayName).FirstOrDefault() })
             .SingleOrDefaultAsync(ct);
-        return row is null ? TypedResults.NotFound() : TypedResults.Ok(ToView(row.Anomaly, row.UserName));
+        if (row is null) return TypedResults.NotFound();
+
+        var job = await db.ResponseJobs.SingleOrDefaultAsync(j => j.AnomalyId == id, ct);
+        var revoked = await db.Sessions.CountAsync(s => s.RevokedByAnomalyId == id, ct);
+        return TypedResults.Ok(ToView(row.Anomaly, row.UserName) with
+        {
+            Response = job is null ? null : ResponseJobView.From(job),
+            RevokedSessions = revoked,
+        });
     }
 
     private static AnomalyView ToView(Anomaly a, string? userName)
     {
         using var evidence = JsonDocument.Parse(a.Evidence);
         return new AnomalyView(a.Id, a.Detector, a.Severity, a.UserId, userName, a.SessionId, a.DetectedAt,
-            a.EventIds.Count, a.EventIds, evidence.RootElement.Clone(), a.Decision, a.DecisionReason, a.PolicyVersion);
+            a.EventIds.Count, a.EventIds, evidence.RootElement.Clone(), a.Decision, a.DecisionReason, a.PolicyVersion, a.RespondedAt);
     }
 }
