@@ -2,24 +2,12 @@ using ThreatLock.Core;
 using ThreatLock.Infrastructure;
 using ThreatLock.Worker;
 
-var builder = Host.CreateApplicationBuilder(args);
+// All registrations live in WorkerApp so integration tests can build the same host.
+// (Program stays internal: tests also see the API's public Program, and two would clash.)
+var host = WorkerApp.CreateBuilder(args).Build();
 
-if (!builder.Environment.IsDevelopment())
-{
-    builder.Logging.ClearProviders();
-    builder.Logging.AddJsonConsole(o => o.UseUtcTimestamp = true);
-}
-
-builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddThreatLockInfrastructure();
-
-// M1 has one job: prove the Worker can reach its dependencies. The event consumer (M4) and
-// response orchestrator (M6) are added here as further hosted services.
-builder.Services.AddHostedService<DependencyHeartbeat>();
-
-var host = builder.Build();
-
-var logger = host.Services.GetRequiredService<ILogger<Program>>();
-StartupLog.Starting(logger, AppInfo.Name, "Worker", AppInfo.Version, builder.Environment.EnvironmentName);
+var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ThreatLock.Worker");
+var environment = host.Services.GetRequiredService<IHostEnvironment>().EnvironmentName;
+StartupLog.Starting(logger, AppInfo.Name, "Worker", AppInfo.Version, environment);
 
 await host.RunAsync();
