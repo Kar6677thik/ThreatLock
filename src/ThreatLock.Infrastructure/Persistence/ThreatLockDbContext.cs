@@ -11,6 +11,9 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
     public DbSet<Note> Notes => Set<Note>();
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<ActivityEventRecord> ActivityEvents => Set<ActivityEventRecord>();
+    public DbSet<Anomaly> Anomalies => Set<Anomaly>();
+    public DbSet<TorExitSnapshot> TorExitSnapshots => Set<TorExitSnapshot>();
 
     /// <summary>
     /// Read by the query filter below. EF Core turns a reference to a DbContext member into a
@@ -89,5 +92,41 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
             token.HasIndex(t => t.SessionId);
             token.HasOne<Session>().WithMany().HasForeignKey(t => t.SessionId).OnDelete(DeleteBehavior.Cascade);
         });
+
+        // No foreign keys on events: they're high-volume telemetry, written on the hot path and
+        // purged after 30 days. An FK check per insert buys little here.
+        builder.Entity<ActivityEventRecord>(evt =>
+        {
+            evt.ToTable("activity_events");
+            evt.Property(e => e.Id).ValueGeneratedNever();
+            evt.Property(e => e.Type).HasMaxLength(40);
+            evt.Property(e => e.Geo).HasColumnType("jsonb");
+            evt.Property(e => e.Metadata).HasColumnType("jsonb");
+            evt.Property(e => e.DeviceId).HasMaxLength(64);
+            evt.Property(e => e.UserAgent).HasMaxLength(512);
+            evt.Property(e => e.RequestId).HasMaxLength(100);
+            // The sweeper's query ("unpublished events") only ever touches a handful of rows;
+            // a partial index keeps it tiny however large the table grows.
+            evt.HasIndex(e => e.OccurredAt, "unpublished").HasFilter("published_at IS NULL").HasDatabaseName("ix_activity_events_unpublished");
+            evt.HasIndex(e => new { e.UserId, e.OccurredAt });
+            // Two indexes on the same column need explicit names, or EF quietly merges them into one;
+            // HasDatabaseName then stops the snake_case convention from renaming them.
+            evt.HasIndex(e => e.OccurredAt, "retention").HasDatabaseName("ix_activity_events_occurred_at");   // retention purge
+        });
+
+        builder.Entity<Anomaly>(anomaly =>
+        {
+            anomaly.Property(a => a.Detector).HasMaxLength(40);
+            anomaly.Property(a => a.Severity).HasMaxLength(10);
+            anomaly.Property(a => a.DedupeKey).HasMaxLength(200);
+            anomaly.Property(a => a.Evidence).HasColumnType("jsonb");
+            anomaly.Property(a => a.Decision).HasMaxLength(20);
+            anomaly.Property(a => a.DecisionReason).HasMaxLength(100);
+            anomaly.HasOne<Org>().WithMany().HasForeignKey(a => a.OrgId).OnDelete(DeleteBehavior.Restrict);
+            anomaly.HasIndex(a => new { a.OrgId, a.DedupeKey }).IsUnique();
+            anomaly.HasIndex(a => new { a.OrgId, a.DetectedAt });
+        });
+
+        builder.Entity<TorExitSnapshot>(snapshot => snapshot.Property(s => s.Source).HasMaxLength(500));
     }
 }

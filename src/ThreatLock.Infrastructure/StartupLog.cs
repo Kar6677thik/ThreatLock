@@ -11,4 +11,7 @@ public static partial class StartupLog
 {
     [LoggerMessage(Level = LogLevel.Information, Message = "{App} {Component} {Version} starting in {Environment}")]
     public static partial void Starting(ILogger logger, string app, string component, string version, string environment);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "GeoIP database not found at {Path}; locations will be unknown. Run scripts/download-geoip.sh")]
+    public static partial void GeoIpMissing(ILogger logger, string path);
 }

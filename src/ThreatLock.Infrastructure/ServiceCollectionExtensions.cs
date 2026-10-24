@@ -3,6 +3,13 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using StackExchange.Redis;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using ThreatLock.Core.Detection;
+using ThreatLock.Core.Geo;
+using ThreatLock.Infrastructure.Detection;
+using ThreatLock.Infrastructure.Events;
+using ThreatLock.Infrastructure.Geo;
 using ThreatLock.Infrastructure.HealthChecks;
 using ThreatLock.Infrastructure.Persistence;
 using ThreatLock.Infrastructure.Sessions;
@@ -57,6 +64,33 @@ public static class ServiceCollectionExtensions
 
         // Shared by the API (checks on every request) and the Worker (revokes in M6).
         services.AddSingleton<SessionStore>();
+
+        // Activity events: written by the API, read by the Worker (SPEC §7).
+        services.AddOptions<EventStreamOptions>().BindConfiguration(EventStreamOptions.SectionName);
+        services.AddSingleton<EventPublisher>();
+
+        // Detection (SPEC §8): state, Tor list and anomaly storage.
+        services.AddOptions<TorOptions>().BindConfiguration(TorOptions.SectionName);
+        services.AddHttpClient(nameof(TorExitListLoader), client => client.Timeout = TimeSpan.FromSeconds(30));
+        services.AddSingleton<TorExitListLoader>();
+        services.AddSingleton<ITorExitList, RedisTorExitList>();
+        services.AddSingleton<IDetectorState, RedisDetectorState>();
+        services.AddSingleton<AnomalyStore>();
+
+        // GeoIP (ADR-0009). Without the database file every lookup is "unknown": the app still
+        // works, impossible travel just never fires. A warning is logged at startup.
+        services.AddOptions<GeoIpOptions>().BindConfiguration(GeoIpOptions.SectionName);
+        services.AddSingleton<IGeoIpLookup>(sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<GeoIpOptions>>().Value;
+            var path = Path.IsPathRooted(options.DatabasePath)
+                ? options.DatabasePath
+                : Path.GetFullPath(Path.Combine(sp.GetRequiredService<IHostEnvironment>().ContentRootPath, options.DatabasePath));
+            if (File.Exists(path)) return new MmdbGeoIpLookup(path, options.DefaultAccuracyKm);
+
+            StartupLog.GeoIpMissing(sp.GetRequiredService<ILoggerFactory>().CreateLogger("ThreatLock.GeoIp"), path);
+            return new NullGeoIpLookup();
+        });
 
         // Hosts that act for a tenant (the API) register their own ITenantContext; TryAdd keeps it.
         services.TryAddScoped<ITenantContext, NoTenantContext>();
