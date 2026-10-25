@@ -14,8 +14,8 @@ One file per milestone, written **during** the work. It's the story of the build
 | M7 Audit log | [M7-audit-log.md](M7-audit-log.md) |
 | M8 Remaining detectors | [M8-remaining-detectors.md](M8-remaining-detectors.md) |
 | M9 Simulator and evaluation | [M9-simulator-evaluation.md](M9-simulator-evaluation.md) |
-| M10 Deployment | *not started* |
-| M11 Finish | *not started* |
+| M10 Deployment | *on hold: home server down* |
+| M11 Finish | [M11-finish.md](M11-finish.md) |
 
 ## Template
 
