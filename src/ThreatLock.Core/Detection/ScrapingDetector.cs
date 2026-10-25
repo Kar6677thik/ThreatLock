@@ -39,7 +39,8 @@ public sealed record ScrapingSettings(double K = 4, double FloorPerMinute = 60, 
 /// with a personal threshold from their baseline.
 /// <para>
 /// Every event above the threshold signals; they collapse into one anomaly per session per ten
-/// minutes. Above three times the threshold a second, High-severity anomaly is raised.
+/// minutes. Above three times the threshold a second, High-severity anomaly is raised. Before
+/// the user's baseline is trusted (cold start) the first one is Low, not Medium.
 /// </para>
 /// Known weaknesses: a scraper that stays under the threshold is invisible, and a baseline can be
 /// "trained" upwards slowly. Baseline learning caps outlier minutes to make that harder.
@@ -63,6 +64,12 @@ public sealed class ScrapingDetector(ScrapingSettings? settings = null) : IDetec
         if (count <= threshold) return [];
 
         var extreme = count > 3 * threshold;
+        var coldStart = baseline is null || baseline.ActiveMinutes < settings.MinActiveMinutes;
+        // Until we know this user's normal rate, a merely-above-the-floor burst is Low: recorded,
+        // but below the default minimum severity, so nobody is signed out for being a heavy reader
+        // on day one. The first evaluation run showed exactly that (98 % of power users). An extreme
+        // burst (3× the floor) is High either way.
+        var severity = extreme ? Severity.High : coldStart ? Severity.Low : Severity.Medium;
         var bucket = evt.OccurredAt.UtcDateTime;
         var tenMinutes = $"{bucket:yyyyMMddHH}{bucket.Minute / 10}";
         var evidence = new JsonObject
@@ -72,14 +79,14 @@ public sealed class ScrapingDetector(ScrapingSettings? settings = null) : IDetec
             ["baselineMean"] = baseline is null ? null : Math.Round(baseline.MeanPerMinute, 2),
             ["baselineStd"] = baseline is null ? null : Math.Round(baseline.StdPerMinute, 2),
             ["baselineActiveMinutes"] = baseline?.ActiveMinutes,
-            ["coldStart"] = baseline is null || baseline.ActiveMinutes < settings.MinActiveMinutes,
+            ["coldStart"] = coldStart,
             ["ip"] = evt.Ip,
             ["occurredAt"] = evt.OccurredAt.ToString("O", CultureInfo.InvariantCulture),
         };
 
         return
         [
-            new DetectionSignal(Id, evt.OrgId, userId, evt.SessionId, extreme ? Severity.High : Severity.Medium,
+            new DetectionSignal(Id, evt.OrgId, userId, evt.SessionId, severity,
                 $"scrape:{userId}:{evt.SessionId}:{tenMinutes}{(extreme ? ":x3" : "")}", evidence, evt.Id, evt.Ip is null ? [] : [evt.Ip]),
         ];
     }

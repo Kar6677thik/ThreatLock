@@ -42,16 +42,20 @@ public class NewDetectorsEndToEndTests(ContainersFixture containers)
     private static string Device() => $"dev-{Guid.NewGuid():N}";
 
     [Fact]
-    public async Task D3_reading_faster_than_the_floor_is_scraping_and_gets_the_session_revoked()
+    public async Task D3_reading_three_times_the_floor_is_scraping_and_gets_the_session_revoked()
     {
         var owner = await Api.RegisterOrgAsync();
         var scraper = await Api.CreateUserAsync(owner, "Scraper");
         var note = await owner.CreateNoteAsync("Shared plan", shared: true);
 
-        for (var i = 0; i < 61; i++) (await scraper.Client.GetAsync($"/api/notes/{note.Id}", Ct)).EnsureSuccessStatusCode();
+        // 181 reads in a minute: over 3× the 60/min floor, so High even with no baseline yet.
+        for (var i = 0; i < 181; i++) (await scraper.Client.GetAsync($"/api/notes/{note.Id}", Ct)).EnsureSuccessStatusCode();
 
-        var anomaly = await AnomalyAsync(owner, scraper.User.Id, DetectorIds.Scraping);
-        Assert.Equal(("responded", "medium"), (anomaly.Decision, anomaly.Severity));
+        await AnomalyAsync(owner, scraper.User.Id, DetectorIds.Scraping);   // the first one: Low while cold, so only observed
+        var anomaly = await Eventually.GetAsync(async () =>
+            (await owner.Client.GetFromJsonAsync<List<AnomalyView>>($"/api/admin/anomalies?detector={DetectorIds.Scraping}", Ct))!
+                .FirstOrDefault(a => a.UserId == scraper.User.Id && a.Severity == "high"), what: "high scraping anomaly");
+        Assert.Equal("responded", anomaly.Decision);
         Assert.True(anomaly.Evidence.GetProperty("coldStart").GetBoolean());
         await Eventually.TrueAsync(async () => (await scraper.Client.GetAsync("/api/notes", Ct)).StatusCode == HttpStatusCode.Unauthorized,
             what: "scraper revoked");
