@@ -168,7 +168,8 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **What:** the mean μ is the average; the standard deviation σ measures spread. A value's *z-score* is `(x − μ) / σ`, i.e. how many "typical wiggles" away from normal it is. An *exponentially weighted moving average* gives recent data more weight so the baseline adapts as habits change.
 - **Why:** D3 fires when reads per minute exceed `max(floor, μ + k·σ)`.
 - **When:** M8.
-- **Watch out:** cold start (a new user has no history, so use the org floor); σ = 0 (a perfectly regular user makes any change look infinite, so clamp it); slow poisoning (an attacker can ramp up gradually to drag the baseline upwards).
+- **Watch out:** cold start (a new user has no history, so use the org floor); σ = 0 (a perfectly regular user makes any change look infinite, so clamp it: `max(floor, …)` does that); slow poisoning (an attacker can ramp up gradually to drag the baseline upwards).
+- **As built (M8):** `Ewma.Update` with α = 0.05 per active minute; the Worker folds complete minutes hourly from `activity_events`, behind a per-user watermark so a rerun changes nothing. Minutes above the user's current threshold are **capped** before they're learnt, or one flagged scraping burst would teach the baseline that bursts are normal (a mutation test removes the cap and a test fails).
 
 ### 3.3 Haversine and impossible travel
 
@@ -190,6 +191,20 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **Why:** D1. Legitimate users of a corporate notes app rarely use Tor; attackers often do.
 - **When:** M4.
 - **Watch out:** the list changes hourly, and plenty of attackers use residential proxies instead.
+
+### 3.6 Sliding windows on event time
+
+- **What:** "how many reads in the last minute?" asked at every event, where "the last minute" is measured back from the *event's* timestamp, not the server clock. In Redis it's a sorted set scored by event time: add the event (`ZADD`, keyed by event id so a redelivery counts once), drop members older than the window, count the rest, all in one `MULTI`.
+- **Why:** D3 (reads per minute) and D4 (distinct notes read since a new device's first login). Event time means the replay harness can push a day of traffic through in milliseconds and get exactly the counts live traffic would.
+- **When:** M8.
+- **Watch out:** a window that's never trimmed counts forever. A mutation test that removes the trim is caught only by a test against **real Redis**; the in-memory fake was correct, so unit tests alone didn't notice.
+
+### 3.7 Session fingerprints
+
+- **What:** what a session looked like when it started: here, the device id plus the user agent reduced to a **family** (`Chrome/Windows`). Every later event in the session is compared with it.
+- **Why:** D5. A copied cookie or token used from the attacker's machine arrives with a different device id and browser. Break B2: revoked in ~0.5 s.
+- **When:** M8.
+- **Watch out:** compare families, not full strings, or every browser auto-update looks like a hijack (a mutation test proves it). Don't fingerprint on IP: phones change IP constantly. And all of it is client-supplied: a careful thief copies it too, which is why refresh-token reuse (Critical) backs it up.
 
 ---
 
