@@ -1,3 +1,5 @@
+using ThreatLock.Core.Response;
+using ThreatLock.Infrastructure.Observability;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using ThreatLock.Infrastructure.Response;
@@ -18,6 +20,8 @@ public sealed partial class ResponseOrchestrator(
     ResponseJobStore jobs,
     ResponseExecutor executor,
     IOptions<ResponseOptions> options,
+    ThreatLockMetrics metrics,
+    TimeProvider time,
     ILogger<ResponseOrchestrator> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -62,9 +66,11 @@ public sealed partial class ResponseOrchestrator(
 
         if (job is null) return false;
 
+        var started = time.GetTimestamp();
         try
         {
             await executor.ExecuteAsync(job, ct);
+            metrics.JobAttempt("succeeded", time.GetElapsedTime(started));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -73,6 +79,7 @@ public sealed partial class ResponseOrchestrator(
             try
             {
                 await jobs.ReleaseAsync(job, CancellationToken.None);
+                metrics.JobAttempt("released", time.GetElapsedTime(started));
             }
             catch (Exception ex) when (ex is NpgsqlException or TimeoutException)
             {
@@ -86,6 +93,7 @@ public sealed partial class ResponseOrchestrator(
             try
             {
                 var status = await jobs.FailAsync(job, ex, ct);
+                metrics.JobAttempt(status == JobStatuses.Dead ? "dead" : "failed", time.GetElapsedTime(started));
                 LogJobFailed(ex, job.Id, job.Attempts, status);
             }
             catch (Exception inner) when (inner is NpgsqlException or TimeoutException)

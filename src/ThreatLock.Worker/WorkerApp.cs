@@ -1,5 +1,7 @@
 using ThreatLock.Core.Detection;
+using OpenTelemetry.Metrics;
 using ThreatLock.Infrastructure;
+using ThreatLock.Infrastructure.Observability;
 using ThreatLock.Worker.Detection;
 using ThreatLock.Worker.Events;
 using ThreatLock.Worker.Response;
@@ -25,6 +27,23 @@ public static class WorkerApp
 
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddThreatLockInfrastructure();
+
+        // The Worker has no web server, so OpenTelemetry's own small HTTP listener serves
+        // /metrics (SPEC §18) on Metrics:WorkerHost:WorkerPort. Port 0 switches it off (tests run
+        // several Workers at once and don't need it). In a container the host is "+" (all addresses).
+        var metricsPort = builder.Configuration.GetValue("Metrics:WorkerPort", 9464);
+        if (metricsPort > 0)
+        {
+            var metricsHost = builder.Configuration.GetValue("Metrics:WorkerHost", "localhost")!;
+            builder.Services.AddOpenTelemetry().WithMetrics(metrics => metrics
+                .AddMeter(ThreatLockMetrics.MeterName)
+                .AddRuntimeInstrumentation()
+                .AddPrometheusHttpListener(o =>
+                {
+                    o.Host = metricsHost;
+                    o.Port = metricsPort;
+                }));
+        }
 
         // The detectors (SPEC §8.2). Each runs on every event and ignores the ones it doesn't care about.
         builder.Services.AddSingleton<IDetector, TorExitDetector>();

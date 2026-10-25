@@ -1,3 +1,4 @@
+using ThreatLock.Infrastructure.Observability;
 using ThreatLock.Core.Detection;
 using ThreatLock.Core.Events;
 using ThreatLock.Core.Policy;
@@ -20,6 +21,7 @@ public sealed partial class EventProcessor(
     IUserBaselines baselines,
     AnomalyStore anomalies,
     PolicyStore policies,
+    ThreatLockMetrics metrics,
     ILogger<EventProcessor> logger)
 {
     /// <summary>Returns how many *new* anomalies the event produced.</summary>
@@ -37,6 +39,7 @@ public sealed partial class EventProcessor(
 
             foreach (var signal in await detector.EvaluateAsync(evt, context, ct))
             {
+                metrics.SignalRaised(signal.Detector);
                 roles ??= await policies.GetUserRolesAsync(signal.UserId, ct);
                 var decision = PolicyEvaluator.Decide(signal, policy.Policy, roles);
 
@@ -46,6 +49,7 @@ public sealed partial class EventProcessor(
                 if (!result.Created) continue;
 
                 created++;
+                metrics.AnomalyCreated(signal.Detector, decision.Outcome.ToString().ToLowerInvariant());
                 LogAnomaly(signal.Detector, signal.Severity, decision.Outcome, decision.Reason, policy.Version, result.Id, signal.UserId, evt.Id);
             }
         }

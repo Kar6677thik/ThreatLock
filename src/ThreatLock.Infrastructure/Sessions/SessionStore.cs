@@ -1,3 +1,4 @@
+using ThreatLock.Infrastructure.Observability;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using StackExchange.Redis;
@@ -25,7 +26,8 @@ public sealed partial class SessionStore(
     NpgsqlDataSource db,
     IConnectionMultiplexer redis,
     TimeProvider time,
-    ILogger<SessionStore> logger)
+    ILogger<SessionStore> logger,
+    ThreatLockMetrics? metrics = null)
 {
     private static readonly TimeSpan ActiveCacheTtl = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan LastSeenThrottle = TimeSpan.FromMinutes(1);
@@ -38,8 +40,32 @@ public sealed partial class SessionStore(
     /// <summary>True if the session exists, isn't revoked and hasn't expired.</summary>
     public async Task<bool> IsActiveAsync(Guid sid, CancellationToken ct)
     {
-        var cached = await TryRedisAsync(() => redis.GetDatabase().StringGetAsync(StatusKey(sid)));
-        if (cached is { HasValue: true } value) return value == Active;
+        var started = time.GetTimestamp();
+        var source = "postgres";
+        try
+        {
+            var cached = await TryRedisAsync(() => redis.GetDatabase().StringGetAsync(StatusKey(sid)));
+            if (cached is { HasValue: true } value)
+            {
+                source = "redis";
+                return value == Active;
+            }
+
+            return await CheckPostgresAsync(sid, ct);
+        }
+        catch (SessionStoreUnavailableException)
+        {
+            source = "unavailable";
+            throw;
+        }
+        finally
+        {
+            metrics?.SessionChecked(source, time.GetElapsedTime(started));
+        }
+    }
+
+    private async Task<bool> CheckPostgresAsync(Guid sid, CancellationToken ct)
+    {
 
         bool active;
         DateTimeOffset absoluteExpiresAt;

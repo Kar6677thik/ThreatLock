@@ -1,3 +1,4 @@
+using ThreatLock.Infrastructure.Observability;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using System.Text.Json.Nodes;
@@ -51,7 +52,8 @@ public sealed partial class ResponseExecutor(
     AuditLog audit,
     IResponseFaultInjector faults,
     TimeProvider time,
-    ILogger<ResponseExecutor> logger)
+    ILogger<ResponseExecutor> logger,
+    ThreatLockMetrics? metrics = null)
 {
     /// <summary>Repeated anomalies about one user within this window share one unread notification.</summary>
     public static readonly TimeSpan GroupingWindow = TimeSpan.FromHours(1);
@@ -256,10 +258,19 @@ public sealed partial class ResponseExecutor(
     {
         if (JobActions.Revokes(job.Action))
         {
-            await using var command = db.CreateCommand("UPDATE anomalies SET responded_at = $1 WHERE id = $2 AND responded_at IS NULL");
+            // RETURNING the first event's time only when this call stamped it, so a retry doesn't
+            // record the same revocation twice.
+            await using var command = db.CreateCommand(
+                """
+                UPDATE anomalies a SET responded_at = $1 WHERE a.id = $2 AND a.responded_at IS NULL
+                RETURNING (SELECT e.occurred_at FROM activity_events e WHERE e.id = a.event_ids[1])
+                """);
             command.Parameters.AddWithValue(time.GetUtcNow());
             command.Parameters.AddWithValue(job.AnomalyId);
-            await command.ExecuteNonQueryAsync(ct);
+            if (await command.ExecuteScalarAsync(ct) is DateTime firstEvent)
+            {
+                metrics?.Revoked(job.Detector, time.GetUtcNow() - new DateTimeOffset(firstEvent, TimeSpan.Zero));
+            }
         }
 
         await jobs.CompleteAsync(job, ct);
