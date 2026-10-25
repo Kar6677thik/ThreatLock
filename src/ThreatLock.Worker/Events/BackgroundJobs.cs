@@ -136,3 +136,35 @@ public sealed partial class RetentionPurger(NpgsqlDataSource db, IOptions<EventS
     [LoggerMessage(Level = LogLevel.Warning, Message = "Retention purge failed; retrying tomorrow")]
     private partial void LogPurgeFailed(Exception ex);
 }
+
+/// <summary>
+/// Rebuilds D3's reading baselines from activity events (SPEC §8.2): at startup, then hourly.
+/// Each run folds only minutes after each user's watermark, so restarts and overlapping runs
+/// are harmless.
+/// </summary>
+public sealed partial class BaselineUpdater(UserBaselineStore baselines, TimeProvider time, ILogger<BaselineUpdater> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromHours(1), time);
+        do
+        {
+            try
+            {
+                var updated = await baselines.UpdateAsync(time.GetUtcNow(), stoppingToken);
+                if (updated > 0) LogUpdated(updated);
+            }
+            catch (Exception ex) when (ex is NpgsqlException or TimeoutException)
+            {
+                LogUpdateFailed(ex);
+            }
+        }
+        while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Updated reading baselines for {Count} users")]
+    private partial void LogUpdated(int count);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Baseline update failed; retrying next hour")]
+    private partial void LogUpdateFailed(Exception ex);
+}

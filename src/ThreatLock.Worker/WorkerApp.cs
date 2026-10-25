@@ -26,9 +26,12 @@ public static class WorkerApp
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddThreatLockInfrastructure();
 
-        // The detectors (SPEC §8.2). D3–D5 join in M8.
+        // The detectors (SPEC §8.2). Each runs on every event and ignores the ones it doesn't care about.
         builder.Services.AddSingleton<IDetector, TorExitDetector>();
         builder.Services.AddSingleton<IDetector>(new ImpossibleTravelDetector());
+        builder.Services.AddSingleton<IDetector>(new ScrapingDetector());
+        builder.Services.AddSingleton<IDetector>(new NewDeviceExportDetector());
+        builder.Services.AddSingleton<IDetector, SessionHijackDetector>();
         builder.Services.AddSingleton<EventProcessor>();
 
         builder.Services.AddHostedService<DependencyHeartbeat>();
@@ -36,6 +39,7 @@ public static class WorkerApp
         builder.Services.AddHostedService<EventSweeper>();
         builder.Services.AddHostedService<EventConsumer>();
         builder.Services.AddHostedService<RetentionPurger>();
+        builder.Services.AddHostedService<BaselineUpdater>();
         builder.Services.AddHostedService<ResponseOrchestrator>();
 
         return builder;

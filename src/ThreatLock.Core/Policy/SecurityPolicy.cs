@@ -50,7 +50,11 @@ public sealed record SecurityPolicy(
     Dictionary<string, DetectorPolicy> Detectors,
     ResponsePolicy Response)
 {
-    /// <summary>The policy of an org that never edited it (SPEC §9.3). Impossible travel only notifies: it's the noisiest.</summary>
+    /// <summary>
+    /// The policy of an org that never edited it (SPEC §9.3). Impossible travel only notifies: it's
+    /// the noisiest. The rest respond. An org whose saved policy predates a detector gets that
+    /// detector's default entry (see <see cref="For"/>).
+    /// </summary>
     public static SecurityPolicy Default { get; } = new(
         TrustedNetworks: [],
         ExcludedUserIds: [],
@@ -64,6 +68,18 @@ public sealed record SecurityPolicy(
                 [ImpossibleTravelSettings.MaxSpeedKmhKey] = ImpossibleTravelSettings.Default.MaxSpeedKmh,
                 [ImpossibleTravelSettings.MinDistanceKmKey] = ImpossibleTravelSettings.Default.MinDistanceKm,
             }),
+            [DetectorIds.Scraping] = new(DetectorMode.Respond, Severity.Medium, new()
+            {
+                [ScrapingSettings.KKey] = ScrapingSettings.Default.K,
+                [ScrapingSettings.FloorKey] = ScrapingSettings.Default.FloorPerMinute,
+                [ScrapingSettings.MinActiveMinutesKey] = ScrapingSettings.Default.MinActiveMinutes,
+            }),
+            [DetectorIds.NewDeviceExport] = new(DetectorMode.Respond, Severity.High, new()
+            {
+                [NewDeviceExportSettings.WindowMinutesKey] = NewDeviceExportSettings.Default.WindowMinutes,
+                [NewDeviceExportSettings.BulkReadThresholdKey] = NewDeviceExportSettings.Default.BulkReadThreshold,
+            }),
+            [DetectorIds.SessionHijack] = new(DetectorMode.Respond, Severity.High),
         },
         Response: new());
 

@@ -969,6 +969,68 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                     b.ToTable("tor_exit_snapshots", (string)null);
                 });
 
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.UserBaselineRecord", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<long>("ActiveMinutes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("active_minutes");
+
+                    b.Property<DateTimeOffset>("ComputedThrough")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("computed_through");
+
+                    b.Property<double>("ReadsPerMinMean")
+                        .HasColumnType("double precision")
+                        .HasColumnName("reads_per_min_mean");
+
+                    b.Property<double>("ReadsPerMinStd")
+                        .HasColumnType("double precision")
+                        .HasColumnName("reads_per_min_std");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("UserId")
+                        .HasName("pk_user_baselines");
+
+                    b.ToTable("user_baselines", (string)null);
+                });
+
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.UserDevice", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<string>("LastUserAgent")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("last_user_agent");
+
+                    b.HasKey("UserId", "DeviceId")
+                        .HasName("pk_user_devices");
+
+                    b.ToTable("user_devices", (string)null);
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
                     b.HasOne("ThreatLock.Infrastructure.Persistence.AppRole", null)
@@ -1137,6 +1199,26 @@ namespace ThreatLock.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_sessions_users_user_id");
+                });
+
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.UserBaselineRecord", b =>
+                {
+                    b.HasOne("ThreatLock.Infrastructure.Persistence.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_baselines_users_user_id");
+                });
+
+            modelBuilder.Entity("ThreatLock.Infrastructure.Persistence.UserDevice", b =>
+                {
+                    b.HasOne("ThreatLock.Infrastructure.Persistence.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_devices_users_user_id");
                 });
 #pragma warning restore 612, 618
         }

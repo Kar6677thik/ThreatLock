@@ -17,6 +17,7 @@ public sealed partial class EventProcessor(
     IEnumerable<IDetector> detectors,
     IDetectorState state,
     ITorExitList torExits,
+    IUserBaselines baselines,
     AnomalyStore anomalies,
     PolicyStore policies,
     ILogger<EventProcessor> logger)
@@ -25,7 +26,7 @@ public sealed partial class EventProcessor(
     public async Task<int> ProcessAsync(ActivityEvent evt, CancellationToken ct)
     {
         var policy = await policies.GetCachedAsync(evt.OrgId, ct);
-        var context = new DetectionContext(state, torExits, policy.Policy);
+        var context = new DetectionContext(state, torExits, policy.Policy, baselines);
 
         var created = 0;
         IReadOnlyList<string>? roles = null;

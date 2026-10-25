@@ -109,9 +109,21 @@ public sealed partial class ResponseExecutor(
 
         if (job.Action == JobActions.RevokeAndLock)
         {
-            // "Only if null": an existing lock keeps its original time and reason.
+            // "Only if null": an existing lock keeps its original time and reason. And never lock
+            // the org's last unlocked owner: only an owner or security admin can unlock, so that
+            // would lock the whole org out of its own security controls. Their sessions are still
+            // revoked; the audit entry records that the lock was skipped.
             await using var lockUser = new NpgsqlCommand(
-                "UPDATE users SET security_locked_at = $1, security_locked_reason = $2 WHERE id = $3 AND security_locked_at IS NULL",
+                $"""
+                UPDATE users u SET security_locked_at = $1, security_locked_reason = $2
+                WHERE u.id = $3 AND u.security_locked_at IS NULL
+                  AND NOT (
+                    EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'owner')
+                    AND NOT EXISTS (
+                        SELECT 1 FROM users o
+                        JOIN user_roles ur ON ur.user_id = o.id JOIN roles r ON r.id = ur.role_id
+                        WHERE o.org_id = u.org_id AND o.id <> u.id AND r.name = 'owner' AND o.security_locked_at IS NULL))
+                """,
                 connection, transaction);
             lockUser.Parameters.AddWithValue(now);
             lockUser.Parameters.AddWithValue(job.Detector);
@@ -137,17 +149,25 @@ public sealed partial class ResponseExecutor(
     /// Step 4: what the response did, as evidence. Rerunning it is a no-op because of the
     /// idempotency key; the session list comes from durable state, so it's the same on a retry.
     /// </summary>
-    private async Task AuditAsync(ClaimedJob job, List<(Guid Id, DateTimeOffset)> revoked, CancellationToken ct) =>
+    private async Task AuditAsync(ClaimedJob job, List<(Guid Id, DateTimeOffset)> revoked, CancellationToken ct)
+    {
+        // What actually happened, read back from the database: a lock can be skipped (last owner).
+        await using var locked = db.CreateCommand("SELECT security_locked_at IS NOT NULL FROM users WHERE id = $1");
+        locked.Parameters.AddWithValue(job.UserId);
+        var isLocked = await locked.ExecuteScalarAsync(ct) is true;
+
         await audit.AppendAsync(new AuditRecord(
             job.OrgId, ActorTypes.System, null, AuditActions.ResponseExecuted, "user", job.UserId.ToString(), job.AnomalyId,
             new JsonObject
             {
                 ["action"] = job.Action,
                 ["detector"] = job.Detector,
-                ["locked"] = job.Action == JobActions.RevokeAndLock,
+                ["locked"] = isLocked,
+                ["lockSkipped"] = job.Action == JobActions.RevokeAndLock && !isLocked ? "last_owner" : null,
                 ["revokedSessions"] = new JsonArray([.. revoked.Select(s => JsonValue.Create(s.Id.ToString()))]),
             },
             IdempotencyKey: $"response:{job.AnomalyId}"), ct);
+    }
 
     /// <summary>
     /// Step 5: one notification per distinct admin, grouped per (recipient, subject user) within

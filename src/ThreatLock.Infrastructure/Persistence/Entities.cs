@@ -248,3 +248,28 @@ public sealed class AuditLogEntry
     public required byte[] PrevHash { get; init; }
     public required byte[] EntryHash { get; init; }
 }
+
+/// <summary>A device (the SPA's self-chosen <c>X-Device-Id</c>) a user has signed in from (SPEC §6.8). A signal, never proof.</summary>
+public sealed class UserDevice
+{
+    public Guid UserId { get; init; }
+    public required string DeviceId { get; init; }
+    public DateTimeOffset FirstSeenAt { get; init; }
+    public DateTimeOffset LastSeenAt { get; set; }
+    public string? LastUserAgent { get; set; }
+}
+
+/// <summary>
+/// A user's reading baseline for D3 (SPEC §8.2): EWMA mean and standard deviation of reads per
+/// active minute. Updated hourly by the Worker; <see cref="ComputedThrough"/> is the watermark,
+/// so an update that runs twice folds each minute in once.
+/// </summary>
+public sealed class UserBaselineRecord
+{
+    public Guid UserId { get; init; }
+    public double ReadsPerMinMean { get; set; }
+    public double ReadsPerMinStd { get; set; }
+    public long ActiveMinutes { get; set; }
+    public DateTimeOffset ComputedThrough { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}

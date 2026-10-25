@@ -16,7 +16,8 @@ public sealed class AnomalyStore(NpgsqlDataSource db, AuditLog audit, TimeProvid
 {
     /// <summary>
     /// Inserts a new anomaly, or, if one with the same <c>(org_id, dedupe_key)</c> exists, adds the
-    /// event id to it (once). Safe to call twice with the same signal: that's what happens when an
+    /// event id to it (once, and only the first 100: a scraper at 300 reads a minute would otherwise
+    /// grow one row without bound). Safe to call twice with the same signal: that's what happens when an
     /// event is redelivered.
     /// <para>
     /// <c>xmax = 0</c> is a PostgreSQL detail worth knowing: a freshly inserted row has no deleting
@@ -43,6 +44,7 @@ public sealed class AnomalyStore(NpgsqlDataSource db, AuditLog audit, TimeProvid
             ON CONFLICT (org_id, dedupe_key) DO UPDATE
                 SET event_ids = CASE
                     WHEN $9 = ANY (anomalies.event_ids) THEN anomalies.event_ids
+                    WHEN cardinality(anomalies.event_ids) >= 100 THEN anomalies.event_ids
                     ELSE array_append(anomalies.event_ids, $9)
                 END
             RETURNING id, (xmax = 0) AS created
