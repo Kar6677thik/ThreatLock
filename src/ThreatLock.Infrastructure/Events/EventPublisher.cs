@@ -1,3 +1,4 @@
+using ThreatLock.Infrastructure.Observability;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -22,6 +23,7 @@ public sealed partial class EventPublisher(
     NpgsqlDataSource db,
     IConnectionMultiplexer redis,
     IOptions<EventStreamOptions> options,
+    ThreatLockMetrics metrics,
     TimeProvider time,
     ILogger<EventPublisher> logger)
 {
@@ -43,7 +45,8 @@ public sealed partial class EventPublisher(
             return;
         }
 
-        await TryPublishAsync(evt, ct);
+        metrics.EventCaptured();
+        if (!await TryPublishAsync(evt, ct)) metrics.PublishFailed();
     }
 
     /// <summary>XADD + mark published. Returns false (and logs) if either step fails.</summary>

@@ -9,7 +9,9 @@ using ThreatLock.Api.Events;
 using ThreatLock.Api.Notes;
 using ThreatLock.Core;
 using ThreatLock.Infrastructure;
+using ThreatLock.Infrastructure.Observability;
 using ThreatLock.Infrastructure.Persistence;
+using OpenTelemetry.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,6 +28,19 @@ if (!builder.Environment.IsDevelopment())
 builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddThreatLockInfrastructure();
+
+// Metrics (SPEC §18): ThreatLock's own meter, ASP.NET Core's request metrics and .NET runtime
+// metrics, served in Prometheus format at /metrics. Meant for the cluster's Prometheus only:
+// the ingress doesn't route /metrics (M10), and Metrics:Enabled=false removes the endpoint.
+var metricsEnabled = builder.Configuration.GetValue("Metrics:Enabled", true);
+if (metricsEnabled)
+{
+    builder.Services.AddOpenTelemetry().WithMetrics(metrics => metrics
+        .AddMeter(ThreatLockMetrics.MeterName)
+        .AddAspNetCoreInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddPrometheusExporter());
+}
 builder.Services.AddThreatLockAuth();
 builder.Services.AddThreatLockForwardedHeaders();
 builder.Services.AddOptions<SimulationOptions>()
@@ -72,6 +87,8 @@ app.UseAuthorization();
 
 // Liveness: "is the process running?" Runs no checks, so a database outage does not make
 // Kubernetes restart a perfectly healthy API process.
+if (metricsEnabled) app.MapPrometheusScrapingEndpoint("/metrics").AllowAnonymous();
+
 app.MapHealthChecks("/healthz", new HealthCheckOptions { Predicate = _ => false }).AllowAnonymous();
 
 // Readiness: "should this instance receive traffic?" Requires PostgreSQL and Redis.

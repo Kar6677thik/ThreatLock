@@ -41,8 +41,10 @@ public class NewDetectorsTests
         var signals = await ReadsAsync(61, TimeSpan.FromSeconds(59), Context());
 
         var signal = Assert.Single(signals);
-        Assert.Equal((DetectorIds.Scraping, Severity.Medium), (signal.Detector, signal.Severity));
+        // Cold start: above the floor but not extreme is Low, i.e. observed under the default policy.
+        Assert.Equal((DetectorIds.Scraping, Severity.Low), (signal.Detector, signal.Severity));
         Assert.True(signal.Evidence["coldStart"]!.GetValue<bool>());
+        Assert.Equal(DecisionOutcome.Observed, PolicyEvaluator.Decide(signal, SecurityPolicy.Default, []).Outcome);
     }
 
     [Fact]

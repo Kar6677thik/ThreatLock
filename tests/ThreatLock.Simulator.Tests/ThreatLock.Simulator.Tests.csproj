@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The evaluation harnesses (M9): a small labelled dataset replayed on every CI run, so a
+       change that loses recall or adds false positives fails the build. No Docker needed. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ThreatLock.Simulator\ThreatLock.Simulator.csproj" />
+  </ItemGroup>
+
+</Project>

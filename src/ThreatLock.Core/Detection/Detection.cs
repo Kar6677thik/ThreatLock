@@ -103,8 +103,8 @@ public interface ITorExitList
 }
 
 /// <summary>
-/// Simple in-memory state for unit tests and the offline replay harness. Ignores TTLs: replay
-/// runs are short, and detectors already ignore locations older than their own window.
+/// Simple in-memory state for unit tests and the offline replay harness. Ignores TTLs (detectors
+/// check ages themselves) but trims sliding windows, as Redis does.
 /// </summary>
 public sealed class InMemoryDetectorState : IDetectorState
 {
@@ -116,7 +116,11 @@ public sealed class InMemoryDetectorState : IDetectorState
     {
         if (!windows.TryGetValue(key, out var members)) windows[key] = members = [];
         members[member] = at;
-        return ValueTask.FromResult((long)members.Values.Count(t => t > at - window && t <= at));
+
+        // Trim like the Redis version does, or a replay of millions of events would rescan every
+        // member it ever saw on every call.
+        foreach (var old in members.Where(m => m.Value <= at - window).Select(m => m.Key).ToList()) members.Remove(old);
+        return ValueTask.FromResult((long)members.Values.Count(t => t <= at));
     }
 
     public ValueTask<string?> GetValueAsync(string key, CancellationToken ct) => ValueTask.FromResult(values.GetValueOrDefault(key));

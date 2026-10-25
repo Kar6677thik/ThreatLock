@@ -89,6 +89,7 @@ public sealed class ContainersFixture : IAsyncLifetime
             // No policy caching: a test that edits the policy sees it applied to the very next event.
             ["Policy:CacheSeconds"] = "0",
             ["Logging:LogLevel:Default"] = "Warning",
+            ["Metrics:WorkerPort"] = "0",
             // Only the shared Worker runs response jobs. Extra Workers come and go mid-test; one
             // stopped while holding a job would delay another test's response.
             ["Responses:Enabled"] = overrides is null ? "true" : "false",

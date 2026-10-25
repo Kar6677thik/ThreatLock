@@ -9,7 +9,7 @@ Each Break/Prove experiment from [spec §15](../spec/SPEC.md#15-break-and-prove-
 | B3 | VPN user flagged as impossible travel | [B3-vpn-false-positive.md](B3-vpn-false-positive.md) (complete) |
 | B4 | Duplicate notifications from a non-idempotent responder | [B4-idempotent-responder.md](B4-idempotent-responder.md) (complete) |
 | B5 | Tampered audit entry | [B5-audit-tamper.md](B5-audit-tamper.md) (complete) |
-| Eval | False-positive rate, recall, p95 time to revoke | *not run* |
+| Eval | False-positive rate, recall, p95 time to revoke | [Eval-detection-and-time-to-revoke.md](Eval-detection-and-time-to-revoke.md) (complete, local; home server in M10) |
 
 ## Template
 

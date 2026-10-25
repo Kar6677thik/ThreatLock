@@ -9,5 +9,6 @@
   <Folder Name="/tests/">
     <Project Path="tests/ThreatLock.Core.Tests/ThreatLock.Core.Tests.csproj" />
     <Project Path="tests/ThreatLock.IntegrationTests/ThreatLock.IntegrationTests.csproj" />
+    <Project Path="tests/ThreatLock.Simulator.Tests/ThreatLock.Simulator.Tests.csproj" />
   </Folder>
 </Solution>

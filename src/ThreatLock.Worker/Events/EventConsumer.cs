@@ -1,3 +1,4 @@
+using ThreatLock.Infrastructure.Observability;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -22,6 +23,7 @@ public sealed partial class EventConsumer(
     IConnectionMultiplexer redis,
     EventProcessor processor,
     IOptions<EventStreamOptions> options,
+    ThreatLockMetrics metrics,
     TimeProvider time,
     ILogger<EventConsumer> logger) : BackgroundService
 {
@@ -51,6 +53,7 @@ public sealed partial class EventConsumer(
                 if (time.GetUtcNow() >= nextClaim)
                 {
                     await ReclaimAsync(stoppingToken);
+                    await SampleLagAsync();
                     nextClaim = time.GetUtcNow() + Stream.ClaimInterval;
                 }
 
@@ -102,6 +105,13 @@ public sealed partial class EventConsumer(
         }
     }
 
+    /// <summary>The consumer group's lag (Redis 7+): how far the detectors are behind the API.</summary>
+    private async Task SampleLagAsync()
+    {
+        var groups = await Db.StreamGroupInfoAsync(Stream.StreamName);
+        if (groups.FirstOrDefault(g => g.Name == Stream.ConsumerGroup) is { Lag: { } lag }) metrics.SetStreamLag(lag);
+    }
+
     /// <summary>Takes over abandoned messages, and dead-letters the ones that keep failing.</summary>
     private async Task ReclaimAsync(CancellationToken ct)
     {
@@ -112,6 +122,7 @@ public sealed partial class EventConsumer(
         foreach (var poison in stale.Where(p => p.DeliveryCount >= Stream.MaxDeliveries))
         {
             await DeadLetterAsync(poison);
+            metrics.EventDeadLettered();
         }
 
         var retry = stale.Where(p => p.DeliveryCount < Stream.MaxDeliveries).Select(p => p.MessageId).ToArray();

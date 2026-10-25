@@ -112,6 +112,26 @@ In the SPA (signed in as an owner or security admin): **Anomalies** lists them w
 
 From M6 the Worker also **acts**. A responded anomaly gets a response job: the user's sessions are revoked (their next request gets `401`), and the admins get a notification. Watch the **Notifications** badge, the anomaly page's **Response** timeline, and, for security admins, **Jobs** (failed and dead jobs, with Retry). To see a lock, set the policy's response action to `revoke_and_lock`. **Wait 10 s** (the Worker's policy cache), then sign in through Tor again. The user's next login gets `403` "locked after suspicious activity" until someone presses **Unlock** on the Users screen.
 
+### Evaluate (M9)
+
+```bash
+# Offline: false positives, recall and precision on the labelled dataset (seed 42, ~15 s)
+dotnet run --project src/ThreatLock.Simulator -c Release -- replay --seed 42 --out artifacts/replay.json
+dotnet run --project src/ThreatLock.Simulator -c Release -- dataset --out artifacts/dataset.jsonl   # the dataset itself
+
+# Live: time to revoke over HTTP (needs the API and Worker running, Development settings)
+dotnet run --project src/ThreatLock.Simulator -c Release -- live --base-url http://127.0.0.1:5080 \
+    --sim-key dev-only-simulator-key-change-me --kind tor --attacks 200 --out artifacts/live-tor.json   # or --kind hijack
+
+# Independent audit check: recompute an org's chain locally
+dotnet run --project src/ThreatLock.Simulator -- audit-verify --base-url http://127.0.0.1:5080 --email you@example.test --password '...'
+
+# Browser smoke test (API, Worker and `npx vite` running)
+cd web && npx playwright install chromium && npm run e2e
+```
+
+Metrics: `curl http://127.0.0.1:5080/metrics` (API) and `curl http://localhost:9464/metrics` (Worker). Results so far are in [the evaluation report](experiments/Eval-detection-and-time-to-revoke.md).
+
 From M8 all five detectors run. **D3 scraping**: read one note about 60 times within a minute. **D4**: sign in from a second browser (another device id), then export. **D5**: reuse a token from another browser or machine. `scripts/experiments/b2-cookie-replay.sh` does the D5 case end to end and prints the time to revoke. Reading baselines are rebuilt hourly by the Worker (and at startup); until a user has 30 active minutes, D3 uses the floor of 60 reads a minute.
 
 From M7 every security action is also written to the org's **audit log**, a hash chain (security admins: **Audit log** screen). **Verify chain** recomputes every hash. When the chain is intact it also gives you the head (seq and hash); save it somewhere outside ThreatLock and paste it back in as an anchor later. To see tampering, run `scripts/experiments/b5-audit-tamper.sh` (it edits the database directly; development only) and sign in as the owner it creates.
@@ -182,6 +202,8 @@ Settings come from `appsettings.json`, then `appsettings.{Environment}.json`, th
 | `Events:MaxDeliveries`, `Events:ClaimIdle`, `Events:ClaimInterval` | `5`, `00:01:00`, `00:00:30` | When a pending message is reclaimed, and when it's dead-lettered |
 | `Events:SweepInterval`, `Events:SweepMinAge`, `Events:RetentionDays` | `00:00:05`, `00:00:05`, `30` | Outbox sweeper and the activity-event purge |
 | `Policy:CacheSeconds` | `10` | How long the Worker reuses an org's policy; a policy edit applies within this many seconds |
+| `Metrics:Enabled` | `true` | API: serve `/metrics` |
+| `Metrics:WorkerHost`, `Metrics:WorkerPort` | `localhost`, `9464` | Worker's metrics listener; port `0` switches it off (tests). In a container the host is `+` |
 | `Responses:Enabled` | `true` | Whether this Worker runs response jobs. Off for extra Workers in tests |
 | `Responses:PollInterval`, `Responses:Lease` | `00:00:00.250`, `00:01:00` | How often an idle Worker checks for due jobs (a NOTIFY usually wakes it first), and how long a claimed job is reserved before another Worker may take it |
 | `Tor:ListUrl`, `Tor:ListPath`, `Tor:RefreshInterval` | Tor Project URL, none, `01:00:00` | Set `ListPath` to a local file to work offline |
@@ -212,6 +234,8 @@ To change Compose ports or credentials, copy `.env.example` to `.env` in the rep
 | A Tor login only revoked, though the policy says `revoke_and_lock` (or any policy edit "didn't apply") | The Worker reused the policy it had read in the last `Policy:CacheSeconds` (10 s). The anomaly page shows which policy version judged it | Wait 10 s after a policy edit. Tests set `Policy:CacheSeconds=0` |
 | Worker logs `Could not claim response jobs` with `relation "response_jobs" does not exist` | The Worker started before the API applied the migrations | Harmless: it keeps retrying and recovers once the API has migrated |
 | A user can't sign in: `403` "locked after suspicious activity" | A `revoke_and_lock` response locked the account | An owner or security admin presses **Unlock** on the Users screen |
+| Worker logs an `HttpListenerException` (access denied) at startup | On Windows, listening on anything but `localhost` needs a URL reservation | Keep `Metrics:WorkerHost=localhost` locally, or set `Metrics:WorkerPort=0` |
+| `npm run e2e` fails at sign-up or never sees "signed out" | The stack isn't running, or the Worker has no Tor list containing `E2E_TOR_IP` | Start the API, Worker and `npx vite`; locally the test fetches a live exit, in CI a one-line list is used |
 | A user is locked right after a refresh-token reuse | D5 raises reuse as Critical, and the default policy locks at critical | Working as designed: two parties held one refresh token. An owner or security admin unlocks. The org's last owner is never locked, only signed out |
 | D4 never fires for a brand-new account | A user's first device is never "new" (normal onboarding) | Sign in from a second device id first |
 | `audit_log is append-only: UPDATE is not allowed` (or DELETE, TRUNCATE) | A trigger blocks changes to the audit log for every role, on purpose (SPEC §11.3) | Don't change audit entries. To reset a development database, drop and recreate it (`docker compose ... down -v`) |

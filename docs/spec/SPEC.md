@@ -433,7 +433,7 @@ Defaults below are starting points; each is overridable per org ([§9](#9-decisi
 | Defaults | `k = 4`, `orgFloor = 60 reads/min`, `minActiveMinutes = 30` before the personal baseline is trusted (cold start uses `orgFloor` only) |
 | Severity | Medium; High if > 3× threshold |
 | Dedupe key | `scrape:{userId}:{sessionId}:{10-minute bucket}` |
-| Known weaknesses | A slow scraper below the threshold is invisible; an attacker can "train" a baseline upward slowly. Documented. |
+| Known weaknesses | A slow scraper below the threshold is invisible; an attacker can "train" a baseline upward slowly. Documented. Since M9, a cold-start burst above the floor but under 3× it is Low (observed by default), so a *slow* scraper on a brand-new account is only observed until its baseline exists. |
 | As built (M8) | Detector id `scraping`; thresholds `k`, `floorPerMinute`, `minActiveMinutes`. The window is a Redis sorted set scored by **event time**, keyed by event id (a redelivery counts once). Every read above the threshold signals; they collapse into one anomaly per session per 10 minutes, plus a second (`:x3`, High) above 3×. Anomalies keep at most 100 event ids. The baseline is EWMA with α = 0.05 per active minute, folded hourly by the Worker behind a per-user watermark (`user_baselines.computed_through`), with minutes above the current threshold **capped** before learning. |
 
 #### D4. New device followed by bulk export
@@ -522,7 +522,7 @@ Suppressed anomalies are still stored (and visible in the admin UI with a filter
 
 ### 9.3 Default policy for a new org
 
-Tor `respond`, impossible travel `notify` (it is the noisiest), scraping `respond`, new-device export `respond`, hijack `respond`, action `revoke_sessions`, lock at `critical`. An org whose saved policy predates a detector gets that detector's default entry. Break B3 confirmed `notify` for D2: responding on raw GeoIP signed out 99.8 % of VPN users in the replay ([report](../experiments/B3-vpn-false-positive.md)). These defaults are revisited after the first evaluation run and the change is recorded in a journal entry.
+Tor `respond`, impossible travel `notify` (it is the noisiest), scraping `respond`, new-device export `respond`, hijack `respond`, action `revoke_sessions`, lock at `critical`. An org whose saved policy predates a detector gets that detector's default entry. Break B3 confirmed `notify` for D2: responding on raw GeoIP signed out 99.8 % of VPN users in the replay ([report](../experiments/B3-vpn-false-positive.md)). These defaults are revisited after the first evaluation run and the change is recorded in a journal entry. **Revisited (M9):** the first run signed out 140 of 143 power users through D3's cold-start floor; D3 now reports cold-start bursts under 3× the floor as Low, which the default `minSeverity: medium` observes. The modes themselves stay as above (D4's 22 % precision on the dataset is a composition effect; orgs that migrate often can set it to `notify`).
 
 ---
 
@@ -708,7 +708,7 @@ JSON over HTTPS. Errors use RFC 9457 Problem Details (`application/problem+json`
 | `GET /api/admin/notifications?unreadOnly=`, `POST /api/admin/notifications/{id}/read`, `POST /api/admin/notifications/read-all` | admin+ | Own inbox: `{ unread, items }` |
 | `GET /api/admin/response-jobs?status=`, `POST /api/admin/response-jobs/{id}/retry` | security_admin, owner | Failed and dead jobs (default: dead, and pending with an error); retry only dead jobs (`409` otherwise), keeping step markers |
 | `GET /healthz`, `GET /readyz` | ops | Liveness; readiness (DB + Redis reachable) |
-| `GET /metrics` | ops (cluster-internal only) | Prometheus metrics |
+| `GET /metrics` | ops (cluster-internal only; anonymous, never routed by the ingress) | Prometheus metrics (API); the Worker serves its own on port 9464 |
 
 An OpenAPI document is generated at build time and committed so the SPA's TypeScript client can be generated from it.
 
@@ -775,6 +775,8 @@ Measured with the **replay harness**: the Simulator generates a labelled dataset
 
 **Unit of measurement:** a scenario instance (one user's activity over the scenario's duration). The dataset contains at least 1,000 benign and 200 malicious instances with randomised parameters.
 
+As built (M9): `Simulator dataset` and `Simulator replay` (seed 42 by default; ids, times and addresses all come from the seeded generator, so a seed always gives the same dataset). Benign kinds are spread evenly (≈143 each), malicious ones 40 each. The evaluated org has its VPN egress trusted. The replay folds D3 baselines hourly like the Worker. A smaller run (`ThreatLock.Simulator.Tests`) is in CI. First results: FP 14.3 % overall, of which 142 of 143 are the expected migration export (0.1 % without it), and recall 100 % ([report](../experiments/Eval-detection-and-time-to-revoke.md)).
+
 - **False-positive rate** = benign instances with decision `responded` ÷ all benign instances. Reported overall and per detector. (We also report `notified` FPs separately because admin fatigue is a cost too.)
 - **Recall (detection rate)** = malicious instances with the expected detector reaching `responded` or `notified` ÷ all malicious instances.
 - **Precision** = true responses ÷ all responses.
@@ -787,6 +789,7 @@ Measured with the **live harness** against the real deployed stack.
 - **t1 (server-side):** the moment the revoked marker is written to Redis (`sessions.revoked_at` and a metric timestamp).
 - **t1 (client-observed, the headline number):** the Simulator polls `GET /api/me` with the stolen token every 50 ms from t0 and records the first `401`.
 - Run **N ≥ 200** attacks per detector type (D1 and D5 are cheapest to trigger repeatedly). Report p50, p95, p99, max, with machine specs, and whether the Worker was warm.
+- As built (M9): `Simulator live --kind tor|hijack --attacks N`, run sequentially with one fresh user per attack, nearest-rank percentiles. t0 is the client's send time of the malicious request; the server stages are read from the anomaly detail (`detectedAt`, `response.revokedAt`). Local results: p95 **199 ms** (D1) and **142 ms** (D5) client-observed ([report](../experiments/Eval-detection-and-time-to-revoke.md)).
 - Also recorded: the breakdown t0 → event published → detected → job claimed → revoked, from Worker metrics, so we can see which stage dominates.
 
 ### 16.3 Other numbers worth reporting
@@ -802,7 +805,7 @@ Events/s the pipeline sustains on the home server before consumer lag grows; ext
 | Unit | xUnit | Every detector (table-driven: input events → expected signals), policy evaluation order, haversine, baseline maths, canonical serialisation + hash chain, backoff |
 | Integration | xUnit + Testcontainers (real PostgreSQL 17 + Redis) + `WebApplicationFactory` | Login/refresh/rotation/reuse, session check incl. Redis-down fallback, tenant isolation, event capture + sweeper, consumer redelivery, anomaly dedupe, job claim under concurrency, **crash-after-each-step idempotency**, audit append under concurrent writers, tamper detection |
 | Frontend | Vitest (+ Testing Library) | API wrapper refresh-once logic, a few key components |
-| End-to-end smoke | Playwright (from M9) | Login → read notes → get revoked → see "signed out" |
+| End-to-end smoke | Playwright (from M9) | Sign up → use the app → the same account signs in from a Tor exit → D1 revokes → see "signed out". CI job `e2e` runs the full stack (service containers, API, Worker, Vite) |
 | Evaluation | Simulator | [§16](#16-evaluation-and-metrics); not part of CI pass/fail, but CI runs a small dataset to catch regressions in recall |
 
 Rules: tests use `TimeProvider` fakes, never `Thread.Sleep` for logic; each integration test gets a fresh database (template database or Respawn). CI runs everything on every pull request.
@@ -813,6 +816,7 @@ Rules: tests use `TimeProvider` fakes, never `Thread.Sleep` for logic; each inte
 
 - **Logs:** structured JSON to stdout (`Microsoft.Extensions.Logging` JSON console). Every request has a `requestId` that is also stored on activity events and anomalies, so you can follow one attack across components. No secrets, tokens or note content in logs; IPs are allowed (needed for security) but not in metric labels.
 - **Metrics** (OpenTelemetry → Prometheus endpoint): `tl_events_captured_total`, `tl_events_publish_failures_total`, `tl_stream_lag`, `tl_events_dead_total`, `tl_detector_signals_total{detector}`, `tl_anomalies_total{detector,decision}`, `tl_response_job_duration_seconds`, `tl_response_job_attempts_total{outcome}`, `tl_time_to_revoke_seconds` (histogram), `tl_session_check_seconds{source=redis|postgres}`.
+  As built (M9): `ThreatLockMetrics` on `System.Diagnostics.Metrics`, exported by OpenTelemetry (Prometheus exporters, pinned betas). The API serves `/metrics` (anonymous, plus ASP.NET Core and runtime metrics; `Metrics:Enabled=false` removes it; the ingress must not route it, M10). The Worker serves its own on `Metrics:WorkerHost:WorkerPort` (default `localhost:9464`, `0` = off). The histograms are named `tl_session_check_duration_seconds` and `tl_response_job_duration_seconds`. `tl_time_to_revoke_seconds{detector}` is server-side, from the anomaly's first event to its revocation. Labels never carry user ids, emails or IPs (an integration test checks).
 - **Health:** `/healthz` (process alive) and `/readyz` (DB and Redis reachable) used by k3s probes.
 - Dashboards (Grafana) are a stretch goal; the metrics endpoint is enough for the reports.
 

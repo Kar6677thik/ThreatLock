@@ -19,6 +19,7 @@ public sealed record AuditEntryView(
     string? TargetId,
     Guid? AnomalyId,
     JsonElement Details,
+    string? IdempotencyKey,
     string PrevHash,
     string EntryHash);
 
@@ -50,7 +51,7 @@ public static class AuditEndpoints
             var f = r.Entry.Fields;
             using var details = JsonDocument.Parse(r.DetailsJson);
             return new AuditEntryView(f.Seq, f.OccurredAt, f.ActorType, f.ActorId, f.ActorId is { } id ? names.GetValueOrDefault(id) : null,
-                f.Action, f.TargetType, f.TargetId, f.AnomalyId, details.RootElement.Clone(),
+                f.Action, f.TargetType, f.TargetId, f.AnomalyId, details.RootElement.Clone(), f.IdempotencyKey,
                 Convert.ToHexStringLower(f.PrevHash), Convert.ToHexStringLower(r.Entry.EntryHash));
         }).ToList());
     }

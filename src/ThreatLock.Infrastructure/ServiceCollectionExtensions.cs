@@ -12,6 +12,7 @@ using ThreatLock.Infrastructure.Detection;
 using ThreatLock.Infrastructure.Events;
 using ThreatLock.Infrastructure.Geo;
 using ThreatLock.Infrastructure.HealthChecks;
+using ThreatLock.Infrastructure.Observability;
 using ThreatLock.Infrastructure.Persistence;
 using ThreatLock.Infrastructure.Policy;
 using ThreatLock.Infrastructure.Response;
@@ -67,6 +68,10 @@ public static class ServiceCollectionExtensions
 
         // The tamper-evident audit log (SPEC §11), written by both the API and the Worker.
         services.AddSingleton<AuditLog>();
+
+        // Metrics (SPEC §18): plain System.Diagnostics.Metrics; each host decides how to export them.
+        services.AddMetrics();
+        services.AddSingleton<ThreatLockMetrics>();
 
         // Shared by the API (checks on every request) and the Worker (revokes in M6).
         services.AddSingleton<SessionStore>();

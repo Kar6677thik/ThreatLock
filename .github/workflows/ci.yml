@@ -79,3 +79,77 @@ jobs:
 
       - name: Audit dependencies
         run: npm audit --audit-level=high
+
+  e2e:
+    name: End-to-end (Playwright against the full stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The same PostgreSQL and Redis versions as Compose and the tests, on the ports the
+    # Development settings expect.
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_DB: threatlock
+          POSTGRES_USER: threatlock
+          POSTGRES_PASSWORD: threatlock-dev
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U threatlock -d threatlock" --health-interval 2s --health-timeout 5s --health-retries 30
+      redis:
+        image: redis:8.10.2-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the API and the Worker
+        run: dotnet build src/ThreatLock.Api && dotnet build src/ThreatLock.Worker
+
+      # Development settings: dev connection strings, migrations on startup, the dev simulator key.
+      # A one-line Tor list (a documentation address) so the test doesn't depend on torproject.org.
+      - name: Start the API and the Worker
+        run: |
+          echo "198.51.100.77" > "$RUNNER_TEMP/tor.txt"
+          nohup dotnet run --no-build --project src/ThreatLock.Api --launch-profile http > "$RUNNER_TEMP/api.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:5080/readyz && break; sleep 1; done
+          Tor__ListPath="$RUNNER_TEMP/tor.txt" nohup dotnet run --no-build --project src/ThreatLock.Worker > "$RUNNER_TEMP/worker.log" 2>&1 &
+          sleep 5
+
+      - name: Install and start the SPA
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          nohup npx vite --port 5173 > "$RUNNER_TEMP/vite.log" 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:5173/ > /dev/null && break; sleep 1; done
+
+      - name: Playwright
+        working-directory: web
+        env:
+          E2E_TOR_IP: 198.51.100.77
+        run: npm run e2e
+
+      - name: Logs on failure
+        if: failure()
+        run: tail -n 100 "$RUNNER_TEMP/api.log" "$RUNNER_TEMP/worker.log" "$RUNNER_TEMP/vite.log"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 7
