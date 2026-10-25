@@ -16,6 +16,7 @@ const entry = (seq: number, action: string): AuditEntryView => ({
   targetId: 'u2u2u2u2-0000',
   anomalyId: null,
   details: { email: 'ben@acme.test' },
+  idempotencyKey: null,
   prevHash: '0'.repeat(64),
   entryHash: 'ab'.repeat(32),
 })

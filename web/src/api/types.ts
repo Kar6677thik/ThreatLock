@@ -159,6 +159,7 @@ export interface AuditEntryView {
   targetId: string | null
   anomalyId: string | null
   details: Record<string, unknown>
+  idempotencyKey: string | null
   prevHash: string
   entryHash: string
 }
