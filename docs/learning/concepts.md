@@ -278,6 +278,14 @@ Field Guide section numbers are in brackets, e.g. [FG 8.6].
 - **Why:** the headline metric is p95 time to revoke.
 - **When:** M9.
 - **Watch out:** you need enough samples (we use ≥ 200), and you can't average percentiles from different runs.
+- **As built (M9):** *nearest rank*: sort, take the value at position ⌈q·n⌉. With n = 200, p99 is the 198th value, so it's decided by three or four slow requests. Report max next to it. Also watch what the *measuring tool* adds: B2's shell loop reported p50 506 ms, and the in-process harness measured the same attack at 132 ms.
+
+### 6.6 Evaluating a detector: datasets, labels and base rates
+
+- **What:** a labelled dataset (each scenario instance marked benign or malicious, with the detector expected to catch it) replayed through the real decision code, giving false-positive rate, recall and precision. The dataset is *generated* from a seed, so it's reproducible and before/after comparisons run on identical traffic.
+- **Why:** M9. It found a real problem on its first run: 98 % of heavy readers signed out by D3's cold-start floor.
+- **When:** M9; CI replays a small version on every build.
+- **Watch out:** the headline FP rate depends on the dataset's *mix*. One benign scenario in seven was a legitimate "new laptop, export" that D4 can't distinguish from an attack, so 14 % of benign instances were signed out, mostly that one scenario. Always show the per-scenario table, and remember real base rates (concepts §3.4). A synthetic 100 % recall means "nothing in the pipeline loses the textbook attacks", not "catches everything".
 
 ### 6.2 Testable time (`TimeProvider`) [FG 23]
 
