@@ -9,7 +9,13 @@ using ThreatLock.Infrastructure.Sessions;
 namespace ThreatLock.Api.Auth;
 
 /// <summary>A new or rotated session: what the client gets back.</summary>
-public sealed record SessionTokens(IssuedToken Access, string RefreshToken, DateTimeOffset RefreshExpiresAt, AppUser User, IReadOnlyList<string> Roles, Guid SessionId);
+/// <param name="NewDevice">True if this login came from a device id the user has never used, while they have used others (detector D4).</param>
+public sealed record SessionTokens(
+    IssuedToken Access, string RefreshToken, DateTimeOffset RefreshExpiresAt, AppUser User, IReadOnlyList<string> Roles, Guid SessionId,
+    bool NewDevice = false);
+
+/// <summary>Result row of the device upsert at login.</summary>
+public sealed record DeviceSeen(bool Inserted, bool HadOthers);
 
 public enum RefreshStatus { Rotated, Invalid, Conflict, ReuseDetected }
 
@@ -48,7 +54,27 @@ public sealed class SessionService(
         db.RefreshTokens.Add(row);
         await db.SaveChangesAsync(ct);
 
-        return new SessionTokens(tokens.Issue(user, roles, session.Id), plain, session.IdleExpiresAt, user, roles, session.Id);
+        var newDevice = client.DeviceId is { } deviceId && await RecordDeviceAsync(user.Id, deviceId, client.UserAgent, now, ct);
+        return new SessionTokens(tokens.Issue(user, roles, session.Id), plain, session.IdleExpiresAt, user, roles, session.Id, newDevice);
+    }
+
+    /// <summary>
+    /// Upserts <c>user_devices</c> (SPEC §6.8) and says whether this device is *new for a user who
+    /// already has others*. A user's very first device isn't "new" in D4's sense: an account that
+    /// was just created and exports right away looks exactly like normal onboarding. One statement:
+    /// two logins racing on the same new device can't both see "inserted".
+    /// </summary>
+    private async Task<bool> RecordDeviceAsync(Guid userId, string deviceId, string? userAgent, DateTimeOffset now, CancellationToken ct)
+    {
+        var seen = await db.Database.SqlQuery<DeviceSeen>(
+            $"""
+            WITH others AS (SELECT EXISTS (SELECT 1 FROM user_devices WHERE user_id = {userId} AND device_id <> {deviceId}) AS had_others)
+            INSERT INTO user_devices (user_id, device_id, first_seen_at, last_seen_at, last_user_agent)
+            VALUES ({userId}, {deviceId}, {now}, {now}, {userAgent})
+            ON CONFLICT (user_id, device_id) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at, last_user_agent = EXCLUDED.last_user_agent
+            RETURNING (xmax = 0) AS inserted, (SELECT had_others FROM others) AS had_others
+            """).ToListAsync(ct);
+        return seen is [{ Inserted: true, HadOthers: true }];
     }
 
     public async Task<RefreshResult> RefreshAsync(string presented, CancellationToken ct)

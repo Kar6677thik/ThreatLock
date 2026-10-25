@@ -12,7 +12,7 @@ One file per milestone, written **during** the work. It's the story of the build
 | M5 Decision framework + admin UI | [M5-decision-framework.md](M5-decision-framework.md) |
 | M6 Response orchestrator | [M6-response-orchestrator.md](M6-response-orchestrator.md) |
 | M7 Audit log | [M7-audit-log.md](M7-audit-log.md) |
-| M8 Remaining detectors | *not started* |
+| M8 Remaining detectors | [M8-remaining-detectors.md](M8-remaining-detectors.md) |
 | M9 Simulator and evaluation | *not started* |
 | M10 Deployment | *not started* |
 | M11 Finish | *not started* |

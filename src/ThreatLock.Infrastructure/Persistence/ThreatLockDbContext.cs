@@ -18,6 +18,8 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
     public DbSet<ResponseJob> ResponseJobs => Set<ResponseJob>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<AuditLogEntry> AuditLog => Set<AuditLogEntry>();
+    public DbSet<UserDevice> UserDevices => Set<UserDevice>();
+    public DbSet<UserBaselineRecord> UserBaselines => Set<UserBaselineRecord>();
 
     /// <summary>
     /// Read by the query filter below. EF Core turns a reference to a DbContext member into a
@@ -154,6 +156,21 @@ public sealed class ThreatLockDbContext(DbContextOptions<ThreatLockDbContext> op
             job.HasIndex(j => j.AnomalyId).IsUnique();
             // The claim query: "pending and due", plus expired leases on "running".
             job.HasIndex(j => new { j.Status, j.NextAttemptAt });
+        });
+
+        builder.Entity<UserDevice>(device =>
+        {
+            device.HasKey(d => new { d.UserId, d.DeviceId });
+            device.Property(d => d.DeviceId).HasMaxLength(64);
+            device.Property(d => d.LastUserAgent).HasMaxLength(512);
+            device.HasOne<AppUser>().WithMany().HasForeignKey(d => d.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<UserBaselineRecord>(baseline =>
+        {
+            baseline.ToTable("user_baselines");
+            baseline.HasKey(b => b.UserId);
+            baseline.HasOne<AppUser>().WithMany().HasForeignKey(b => b.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<AuditLogEntry>(entry =>

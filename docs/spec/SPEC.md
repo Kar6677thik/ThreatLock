@@ -434,6 +434,7 @@ Defaults below are starting points; each is overridable per org ([§9](#9-decisi
 | Severity | Medium; High if > 3× threshold |
 | Dedupe key | `scrape:{userId}:{sessionId}:{10-minute bucket}` |
 | Known weaknesses | A slow scraper below the threshold is invisible; an attacker can "train" a baseline upward slowly. Documented. |
+| As built (M8) | Detector id `scraping`; thresholds `k`, `floorPerMinute`, `minActiveMinutes`. The window is a Redis sorted set scored by **event time**, keyed by event id (a redelivery counts once). Every read above the threshold signals; they collapse into one anomaly per session per 10 minutes, plus a second (`:x3`, High) above 3×. Anomalies keep at most 100 event ids. The baseline is EWMA with α = 0.05 per active minute, folded hourly by the Worker behind a per-user watermark (`user_baselines.computed_through`), with minutes above the current threshold **capped** before learning. |
 
 #### D4. New device followed by bulk export
 
@@ -445,6 +446,7 @@ Defaults below are starting points; each is overridable per org ([§9](#9-decisi
 | Severity | High |
 | Dedupe key | `newdev-export:{userId}:{deviceId}` |
 | Known weaknesses | Device ids are forgeable; a careful attacker can reuse the victim's id. D5 and D2 cover part of that gap. |
+| As built (M8) | Detector id `new_device_export`; thresholds `windowMinutes`, `bulkReadThreshold`. "New" is decided by the **API at login** from `user_devices` (one upsert statement) and sent as `metadata.newDevice` on `login_succeeded`. A user's **very first device is never new**: a just-created account exporting straight away looks exactly like onboarding. The window is measured from the first login's event time. Bulk reads count *distinct* note ids. Logins without a device id are ignored. |
 
 #### D5. Session hijack signals
 
@@ -455,6 +457,7 @@ Defaults below are starting points; each is overridable per org ([§9](#9-decisi
 | Severity | (a) Critical, (b) High |
 | Dedupe key | `hijack:{sessionId}` |
 | Known weaknesses | An attacker who copies the cookie, the device id and the exact user-agent defeats (b); (a) still catches them the moment both parties refresh. |
+| As built (M8) | Detector id `session_hijack`. The fingerprint is `deviceId|family`, where family is browser and OS (`Chrome/Windows`), so version updates don't count. It's set by the session's first event (its login) in Redis for 8 days, and compared on every later authenticated event. Measured in [Break B2](../experiments/B2-cookie-replay.md): stolen token revoked with p50 506 ms. Because (a) is Critical and the default `lockOnSeverity` is critical, refresh-token reuse **locks** the account, subject to the last-owner guard in [§10.3](#103-response-actions). |
 
 ### 8.3 From signal to anomaly
 
@@ -484,8 +487,12 @@ Detector keys are the detector ids (§8.2). Detector-specific numbers live under
   "detectors": {
     "tor":               { "mode": "respond", "minSeverity": "high" },
     "impossible_travel": { "mode": "notify", "minSeverity": "low",
-                           "thresholds": { "maxSpeedKmh": 900, "minDistanceKm": 500 } }
-    // D3–D5 (M8) add their own keys and thresholds
+                           "thresholds": { "maxSpeedKmh": 900, "minDistanceKm": 500 } },
+    "scraping":          { "mode": "respond", "minSeverity": "medium",
+                           "thresholds": { "k": 4, "floorPerMinute": 60, "minActiveMinutes": 30 } },
+    "new_device_export": { "mode": "respond", "minSeverity": "high",
+                           "thresholds": { "windowMinutes": 30, "bulkReadThreshold": 50 } },
+    "session_hijack":    { "mode": "respond", "minSeverity": "high" }
   },
   "response": {
     "action": "revoke_sessions",                  // or "revoke_and_lock"
@@ -515,7 +522,7 @@ Suppressed anomalies are still stored (and visible in the admin UI with a filter
 
 ### 9.3 Default policy for a new org
 
-Tor `respond`, impossible travel `notify` (it is the noisiest), scraping `respond`, new-device export `respond`, hijack `respond`, action `revoke_sessions`, lock at `critical`. These defaults are revisited after the first evaluation run and the change is recorded in a journal entry.
+Tor `respond`, impossible travel `notify` (it is the noisiest), scraping `respond`, new-device export `respond`, hijack `respond`, action `revoke_sessions`, lock at `critical`. An org whose saved policy predates a detector gets that detector's default entry. Break B3 confirmed `notify` for D2: responding on raw GeoIP signed out 99.8 % of VPN users in the replay ([report](../experiments/B3-vpn-false-positive.md)). These defaults are revisited after the first evaluation run and the change is recorded in a journal entry.
 
 ---
 
@@ -562,6 +569,8 @@ Steps 1 and 3 run in one transaction, 5 in another, and 4 (M7) in its own (the a
 | --- | --- | --- |
 | `revoke_sessions` | All sessions die; the user can log in again immediately | None needed |
 | `revoke_and_lock` | All sessions die **and** login is refused until an admin unlocks | Admin "Unlock" in UI (audited) |
+
+**The last owner is never locked** (M8). Only owners and security admins can unlock, so locking an org's last unlocked owner would lock the org out of its own controls. The responder still revokes their sessions; the lock is skipped and the audit entry says so (`lockSkipped: "last_owner"`).
 
 `revoke_and_lock` ignores the cutoff and revokes every live session: once the account is closed, a session opened after the detection is as likely to be the attacker's as the user's. Login checks the lock **after** the password: a correct password gets `403` with `code: account_locked` and a clear message, a wrong one gets the usual `401`, so the lock tells an attacker nothing. Refresh refuses locked users too.
 
@@ -658,10 +667,10 @@ erDiagram
 | `users` (+ Identity tables renamed to `roles`, `user_roles`, `user_claims`, `user_logins`, `user_tokens`, `role_claims`) | Identity columns + `org_id`, `display_name`, `created_at`; `UNIQUE (normalized_email)`. `security_locked_at`, `security_locked_reason` (M6) |
 | `sessions` | `id`, `user_id`, `org_id`, `created_at`, `created_ip inet`, `created_device_id`, `created_user_agent`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `revoked_reason`, `revoked_by_anomaly_id`. Index `(user_id) WHERE revoked_at IS NULL` |
 | `refresh_tokens` | `id`, `session_id`, `token_hash bytea UNIQUE`, `created_at`, `used_at`, `replaced_by_id` |
-| `user_devices` | `PK (user_id, device_id)`, `first_seen_at`, `last_seen_at`, `last_user_agent` |
+| `user_devices` | `PK (user_id, device_id)`, `first_seen_at`, `last_seen_at`, `last_user_agent` (M8; written at login) |
 | `notes` | `id`, `org_id`, `owner_id`, `title`, `body`, `shared bool`, `created_at`, `updated_at`. Index `(org_id, owner_id)` |
 | `activity_events` | `id`, `org_id`, `user_id`, `session_id`, `type`, `occurred_at`, `ip inet`, `geo jsonb`, `device_id`, `user_agent`, `request_id`, `metadata jsonb`, `published_at`. Index `(published_at) WHERE published_at IS NULL`, `(user_id, occurred_at)` |
-| `user_baselines` | `user_id PK`, `reads_per_min_mean`, `reads_per_min_std`, `active_minutes`, `updated_at` |
+| `user_baselines` | `user_id PK`, `reads_per_min_mean`, `reads_per_min_std`, `active_minutes`, `computed_through` (watermark), `updated_at` (M8) |
 | `org_policies` | `PK (org_id, version)`, `document jsonb`, `updated_by`, `updated_at` |
 | `tor_exit_snapshots` | `fetched_at`, `ips inet[]` (latest kept) |
 | `anomalies` | `id`, `org_id`, `user_id`, `session_id`, `detector`, `severity`, `dedupe_key`, `evidence jsonb`, `event_ids uuid[]`, `detected_at`, `policy_version`, `decision`, `decision_reason`, `responded_at`. `UNIQUE (org_id, dedupe_key)` |

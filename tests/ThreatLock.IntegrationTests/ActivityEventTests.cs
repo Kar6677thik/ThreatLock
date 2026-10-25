@@ -74,14 +74,17 @@ public class ActivityEventTests(ContainersFixture containers)
     {
         await using var api = new ThreatLockApiFactory(containers, new Dictionary<string, string?> { ["Auth:RefreshReuseGrace"] = "00:00:00" });
         var owner = await api.RegisterOrgAsync();
-        var login = await RawAuth.LoginAsync(api, owner.User.Email, owner.Password);
+        // Not the owner: from M8, reuse is detector D5's Critical signal, and the response signs
+        // that user out everywhere, which would take the owner's admin session with it.
+        var member = await api.CreateUserAsync(owner, "Member");
+        var login = await RawAuth.LoginAsync(api, member.User.Email, member.Password);
         await RawAuth.RefreshAsync(api, login.RefreshCookie);
         await RawAuth.RefreshAsync(api, login.RefreshCookie);   // reuse → session revoked
         var victim = await api.CreateUserAsync(owner, "Victim");
         await owner.Client.PostAsync($"/api/admin/users/{victim.User.Id}/revoke-sessions", null, Ct);
 
-        Assert.Equal(1, await CountAsync(owner.User.Id, "token_refreshed"));
-        Assert.Equal(1, await CountAsync(owner.User.Id, "refresh_token_reused"));
+        Assert.Equal(1, await CountAsync(member.User.Id, "token_refreshed"));
+        Assert.Equal(1, await CountAsync(member.User.Id, "refresh_token_reused"));
         Assert.Equal(1, await CountAsync(victim.User.Id, "session_revoked"));
     }
 

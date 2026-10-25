@@ -8,7 +8,7 @@ ThreatLock is a learning-scale rebuild of Slack's **Anomaly Event Response** (20
 2. **decides** what to do using each organisation's own policy, exclusions and per-user baselines, and
 3. **responds** automatically by revoking every session of the affected user, writing a tamper-evident audit entry, and notifying admins exactly once.
 
-> **Status:** M7, audit log. Detectors (Tor exit nodes, impossible travel) raise anomalies, each org's versioned policy decides what they mean, and the Worker acts: it revokes sessions (optionally locking the account) and notifies each admin once, even across crashes ([B4](docs/experiments/B4-idempotent-responder.md)). Every security action lands in a per-org hash-chained audit log that names the exact entry someone edited ([B5](docs/experiments/B5-audit-tamper.md)). Revocation is instant ([B1](docs/experiments/B1-stateless-jwt.md)). Next: three more detectors (M8). See the [roadmap](docs/spec/SPEC.md#21-milestones).
+> **Status:** M8, all five detectors. Tor exits, impossible travel, scraping against a per-user baseline, new-device bulk export and session hijack raise anomalies. Each org's versioned policy decides what they mean, and the Worker revokes sessions (optionally locking the account) and notifies each admin once, even across crashes ([B4](docs/experiments/B4-idempotent-responder.md)). A replayed stolen token is revoked in about half a second ([B2](docs/experiments/B2-cookie-replay.md)), VPN users stop being false positives once the VPN is trusted ([B3](docs/experiments/B3-vpn-false-positive.md)), and every security action lands in a hash-chained audit log ([B5](docs/experiments/B5-audit-tamper.md)). Next: simulator and evaluation (M9). See the [roadmap](docs/spec/SPEC.md#21-milestones).
 
 ## Run it locally
 

@@ -13,7 +13,7 @@ public static class PolicyValidator
 {
     public const int MaxListLength = 100;
 
-    private static readonly HashSet<string> KnownDetectors = [DetectorIds.Tor, DetectorIds.ImpossibleTravel];
+    private static readonly HashSet<string> KnownDetectors = [.. DetectorIds.All];
 
     /// <summary>Allowed threshold names and ranges, per detector.</summary>
     private static readonly Dictionary<string, Dictionary<string, (double Min, double Max)>> Thresholds = new()
@@ -22,6 +22,17 @@ public static class PolicyValidator
         {
             [ImpossibleTravelSettings.MaxSpeedKmhKey] = (100, 20_000),
             [ImpossibleTravelSettings.MinDistanceKmKey] = (0, 5_000),
+        },
+        [DetectorIds.Scraping] = new()
+        {
+            [ScrapingSettings.KKey] = (1, 20),
+            [ScrapingSettings.FloorKey] = (5, 10_000),
+            [ScrapingSettings.MinActiveMinutesKey] = (0, 100_000),
+        },
+        [DetectorIds.NewDeviceExport] = new()
+        {
+            [NewDeviceExportSettings.WindowMinutesKey] = (1, 24 * 60),
+            [NewDeviceExportSettings.BulkReadThresholdKey] = (1, 100_000),
         },
     };
 

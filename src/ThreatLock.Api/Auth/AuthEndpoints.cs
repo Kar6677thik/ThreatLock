@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using ThreatLock.Api.Audit;
 using ThreatLock.Api.Events;
 using ThreatLock.Core.Audit;
+using ThreatLock.Core.Detection;
 using ThreatLock.Core.Events;
 using ThreatLock.Core.Identity;
 using ThreatLock.Core.Sessions;
@@ -198,7 +199,7 @@ public static class AuthEndpoints
         var roles = (await users.GetRolesAsync(user)).ToArray();
         var client = ClientInfo.From(http);
         var tokens = await sessions.StartAsync(user, roles, client, ct);
-        await activity.RecordAsync(EventTypes.LoginSucceeded, user.OrgId, user.Id, tokens.SessionId, ct: ct);
+        await activity.RecordAsync(EventTypes.LoginSucceeded, user.OrgId, user.Id, tokens.SessionId, DeviceMetadata(client, tokens), ct);
         await audit.AppendAsync(LoginAudit(user, tokens.SessionId, client), ct);
         var org = await db.Orgs.SingleAsync(o => o.Id == user.OrgId, ct);
         return TypedResults.Ok(Respond(http, tokens, org, auth.Value));
@@ -319,6 +320,10 @@ public static class AuthEndpoints
         var view = new UserView(user.Id, user.Email!, user.DisplayName, org.Id, org.Name, org.Slug, tokens.Roles);
         return new LoginResponse(tokens.Access.AccessToken, tokens.Access.ExpiresAt, view);
     }
+
+    /// <summary>Tells detector D4 whether this login's device is new for the user (only when the client sent a device id).</summary>
+    private static JsonObject? DeviceMetadata(ClientInfo client, SessionTokens tokens) =>
+        client.DeviceId is null ? null : new JsonObject { [NewDeviceExportDetector.NewDeviceMetadata] = tokens.NewDevice };
 
     /// <summary>Who signed in, to which session, from where. IPs are fine in the audit log; tokens never are.</summary>
     private static AuditRecord LoginAudit(AppUser user, Guid sessionId, ClientInfo client) =>

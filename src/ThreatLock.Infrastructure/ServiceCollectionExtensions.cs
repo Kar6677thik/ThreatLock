@@ -82,6 +82,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITorExitList, RedisTorExitList>();
         services.AddSingleton<IDetectorState, RedisDetectorState>();
         services.AddSingleton<AnomalyStore>();
+        services.AddSingleton<UserBaselineStore>();
+        services.AddSingleton<IUserBaselines>(sp => sp.GetRequiredService<UserBaselineStore>());
 
         // Per-org policy (SPEC §9).
         services.AddOptions<PolicyOptions>().BindConfiguration(PolicyOptions.SectionName);
