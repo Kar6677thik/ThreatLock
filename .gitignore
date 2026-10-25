@@ -33,3 +33,7 @@ data/tor/*.txt
 
 # Generated datasets and benchmark output (reports are committed under docs/experiments)
 artifacts/
+
+# Playwright (M9)
+web/playwright-report/
+web/test-results/
