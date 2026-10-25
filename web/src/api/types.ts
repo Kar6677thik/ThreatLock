@@ -172,6 +172,12 @@ export interface VerifyResult {
 }
 
 export const ROLES = ['member', 'admin', 'security_admin', 'owner'] as const
-export const DETECTORS: Record<string, string> = { tor: 'Tor exit node (D1)', impossible_travel: 'Impossible travel (D2)' }
+export const DETECTORS: Record<string, string> = {
+  tor: 'Tor exit node (D1)',
+  impossible_travel: 'Impossible travel (D2)',
+  scraping: 'Scraping rate (D3)',
+  new_device_export: 'New device + export (D4)',
+  session_hijack: 'Session hijack (D5)',
+}
 export const SEVERITIES: Severity[] = ['low', 'medium', 'high', 'critical']
 export const MODES: DetectorMode[] = ['off', 'observe', 'notify', 'respond']

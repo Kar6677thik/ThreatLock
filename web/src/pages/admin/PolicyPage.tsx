@@ -18,6 +18,15 @@ const THRESHOLDS: Record<string, { key: string; label: string }[]> = {
     { key: 'maxSpeedKmh', label: 'Max speed (km/h)' },
     { key: 'minDistanceKm', label: 'Ignore distances under (km)' },
   ],
+  scraping: [
+    { key: 'k', label: 'Standard deviations above normal (k)' },
+    { key: 'floorPerMinute', label: 'Never flag below (reads/min)' },
+    { key: 'minActiveMinutes', label: 'Trust a baseline after (active minutes)' },
+  ],
+  new_device_export: [
+    { key: 'windowMinutes', label: 'Window after first login (min)' },
+    { key: 'bulkReadThreshold', label: 'Bulk read: distinct notes' },
+  ],
 }
 
 function toggle(list: string[], value: string) {
